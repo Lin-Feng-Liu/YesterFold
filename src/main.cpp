@@ -16,6 +16,7 @@ static const char* IMPORT_TXT_PATH  = "data\\import_diary.txt";
 
 static const int MODE_EXIT   = 0;
 static const int MODE_SWITCH = 1;
+static const int MENU_ESC    = -2;
 
 static HANDLE g_hOut = nullptr;
 static HANDLE g_hIn  = nullptr;
@@ -76,10 +77,15 @@ static void wprintln() {
 static void clearScreen() { system("cls"); }
 
 static void pauseScreen() {
+    FlushConsoleInputBuffer(g_hIn);
     wprint(L"\n按任意键继续...");
     DWORD oldMode; GetConsoleMode(g_hIn, &oldMode);
-    SetConsoleMode(g_hIn, oldMode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT));
-    WCHAR ch; DWORD read; ReadConsoleW(g_hIn, &ch, 1, &read, nullptr);
+    SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
+    while (true) {
+        INPUT_RECORD ir; DWORD read;
+        if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) break;
+    }
     SetConsoleMode(g_hIn, oldMode);
 }
 
@@ -112,6 +118,74 @@ static std::string readLine(const std::string& prompt, bool allowEmpty = false) 
         std::cout << "输入不能为空" << std::endl;
     }
     return input;
+}
+
+// ─── 可取消输入（支持 Esc 返回） ───
+
+struct InputResult {
+    bool cancelled;
+    std::string value;
+};
+
+static InputResult readPasswordCancelable(const std::string& prompt) {
+    std::cout << prompt; std::cout.flush();
+    DWORD oldMode; GetConsoleMode(g_hIn, &oldMode);
+    SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
+    std::wstring wpass;
+    while (true) {
+        INPUT_RECORD ir; DWORD read;
+        if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
+        WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+        WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
+        if (vk == VK_RETURN) break;
+        if (vk == VK_ESCAPE) {
+            SetConsoleMode(g_hIn, oldMode); std::cout << std::endl;
+            return {true, ""};
+        }
+        if (vk == VK_BACK) {
+            if (!wpass.empty()) { wpass.pop_back(); std::cout << "\b \b"; }
+        } else if (ch >= L' ') {
+            wpass.push_back(ch);
+            std::cout << '*';
+        }
+        std::cout.flush();
+    }
+    SetConsoleMode(g_hIn, oldMode); std::cout << std::endl;
+    return {false, wstring_to_utf8(wpass)};
+}
+
+static InputResult readLineCancelable(const std::string& prompt, bool allowEmpty = false) {
+    DWORD oldMode; GetConsoleMode(g_hIn, &oldMode);
+    while (true) {
+        std::cout << prompt; std::cout.flush();
+        SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
+        std::wstring line;
+        while (true) {
+            INPUT_RECORD ir; DWORD read;
+            if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+            if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
+            WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+            WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
+            if (vk == VK_RETURN) break;
+            if (vk == VK_ESCAPE) {
+                SetConsoleMode(g_hIn, oldMode); std::cout << std::endl;
+                return {true, ""};
+            }
+            if (vk == VK_BACK) {
+                if (!line.empty()) { line.pop_back(); std::cout << "\b \b"; }
+            } else if (ch >= L' ') {
+                line.push_back(ch);
+                std::wcout << ch;
+            }
+            std::cout.flush();
+        }
+        std::cout << std::endl;
+        SetConsoleMode(g_hIn, oldMode);
+        std::string result = wstring_to_utf8(line);
+        if (!result.empty() || allowEmpty) return {false, result};
+        std::cout << "输入不能为空" << std::endl;
+    }
 }
 
 // ─── 多行粘贴近 ───
@@ -205,6 +279,9 @@ static int menuSelect(const std::vector<MenuItem>& items, int startIdx = 0) {
             }
         } else if (ch == '\r') {
             return si[selPos];
+        } else if (ch == 27) {
+            // Esc → 返回上一级
+            return MENU_ESC;
         } else if (ch >= '0' && ch <= '9') {
             for (int i = 0; i < (int)items.size(); i++) {
                 if (!items[i].selectable) continue;
@@ -218,6 +295,43 @@ static int menuSelect(const std::vector<MenuItem>& items, int startIdx = 0) {
                     return si[selPos];
                 }
             }
+        }
+    }
+}
+
+// ─── 退出确认条 ───
+
+// 返回 true=确认退出, false=取消
+static bool confirmExitBar() {
+    FlushConsoleInputBuffer(g_hIn);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+    int barLine = csbi.dwSize.Y - 1;
+    COORD barPos = {0, (SHORT)barLine};
+    DWORD written;
+    FillConsoleOutputCharacterW(g_hOut, L' ', csbi.dwSize.X, barPos, &written);
+    FillConsoleOutputAttribute(g_hOut, csbi.wAttributes, csbi.dwSize.X, barPos, &written);
+    SetConsoleCursorPosition(g_hOut, barPos);
+    SetConsoleTextAttribute(g_hOut, 0x70);
+    wprint(L"  Enter=保存退出    Esc=取消  ");
+    SetConsoleTextAttribute(g_hOut, 0x07);
+
+    DWORD oldMode; GetConsoleMode(g_hIn, &oldMode);
+    SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
+    while (true) {
+        INPUT_RECORD ir; DWORD read;
+        if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
+        WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+        if (vk == VK_RETURN) {
+            SetConsoleMode(g_hIn, oldMode);
+            FillConsoleOutputCharacterW(g_hOut, L' ', csbi.dwSize.X, barPos, &written);
+            return true;
+        }
+        if (vk == VK_ESCAPE) {
+            SetConsoleMode(g_hIn, oldMode);
+            FillConsoleOutputCharacterW(g_hOut, L' ', csbi.dwSize.X, barPos, &written);
+            return false;
         }
     }
 }
@@ -804,8 +918,8 @@ static void editByDate(DiaryStore& store, const std::string& password) {
         if (std::find(years.begin(), years.end(), y) == years.end()) years.push_back(y);
     }
 
-    // 子菜单结构
-    // ── 年份菜单 ──
+    // 子菜单结构 (标签用于 Esc 返回上一级)
+sel_year:
     std::vector<MenuItem> yearItems;
     yearItems.push_back({L"--- 选择年份 ---", false});
     std::vector<int> yearVal;
@@ -816,11 +930,11 @@ static void editByDate(DiaryStore& store, const std::string& password) {
     yearItems.push_back({L"0. 返回", true});
 
     int yearChoice = menuSelect(yearItems, 1);
-    if (yearChoice == (int)yearItems.size() - 1) return; // "0. 返回"
+    if (yearChoice == (int)yearItems.size() - 1 || yearChoice == MENU_ESC) return;
     int selYear = yearVal[yearChoice - 1];
     clearScreen();
 
-    // ── 月份菜单 ──
+sel_month:
     std::vector<int> months;
     for (size_t i : sorted) {
         auto& e = store.entries()[i];
@@ -841,13 +955,14 @@ static void editByDate(DiaryStore& store, const std::string& password) {
     monthItems.push_back({L"0. 返回", true});
 
     int monthChoice = menuSelect(monthItems, 1);
-    if (monthChoice == (int)monthItems.size() - 1) return;
+    if (monthChoice == (int)monthItems.size() - 1) goto sel_year;
+    if (monthChoice == MENU_ESC) goto sel_year;
     int selMonth = monthVal[monthChoice - 1];
     clearScreen();
 
-    // ── 日期菜单 ──
+sel_day:
     std::vector<int> days;
-    std::vector<size_t> dayEntryIndices; // 对应store中的索引
+    std::vector<size_t> dayEntryIndices;
     for (size_t i : sorted) {
         auto& e = store.entries()[i];
         if (e.value("year", 0) == selYear && e.value("month", 0) == selMonth) {
@@ -867,7 +982,8 @@ static void editByDate(DiaryStore& store, const std::string& password) {
     dayItems.push_back({L"0. 返回", true});
 
     int dayChoice = menuSelect(dayItems, 1);
-    if (dayChoice == (int)dayItems.size() - 1) return;
+    if (dayChoice == (int)dayItems.size() - 1) goto sel_month;
+    if (dayChoice == MENU_ESC) goto sel_month;
     int selDay = dayVal[dayChoice - 1];
     size_t entryIdx = dayEntryIndices[dayChoice - 1];
     clearScreen();
@@ -911,6 +1027,9 @@ static void editByDate(DiaryStore& store, const std::string& password) {
         opItems.push_back({L"0. 返回", true});
 
         int opChoice = menuSelect(opItems, 1);
+
+        // Esc → 返回日期选择
+        if (opChoice == MENU_ESC) goto sel_day;
 
         size_t segCount = segs.size();
         // 查看日记
@@ -990,11 +1109,14 @@ static void editByDate(DiaryStore& store, const std::string& password) {
         // 删除某条记录
         else if (opChoice == (int)segCount + 3) {
             if (segs.empty()) { wprintln(L"没有可删除的记录"); pauseScreen(); continue; }
-            std::string sc = readLine("删除第几条记录? (1-" + std::to_string(segs.size()) + ", 0取消): ");
+            auto scRes = readLineCancelable("删除第几条记录? (1-" + std::to_string(segs.size()) + ", 0取消): ");
+            if (scRes.cancelled || scRes.value.empty()) continue;
             size_t si;
-            try { si = std::stoull(sc); } catch (...) { continue; }
+            try { si = std::stoull(scRes.value); } catch (...) { continue; }
             if (si == 0 || si > segs.size()) continue;
-            if (readLine("确认删除记录 " + std::to_string(si) + "? (输入 yes 确认): ") == "yes") {
+            auto cfmRes = readLineCancelable("确认删除记录 " + std::to_string(si) + "? (输入 yes 确认): ");
+            if (cfmRes.cancelled) continue;
+            if (cfmRes.value == "yes") {
                 segs.erase(si - 1);
                 if (segs.empty()) {
                     store.removeEntry(entryIdx);
@@ -1009,7 +1131,9 @@ static void editByDate(DiaryStore& store, const std::string& password) {
         }
         // 删除整篇日记
         else if (opChoice == (int)segCount + 4) {
-            if (readLine("确认删除这篇日记? (输入 yes 确认): ") == "yes") {
+            auto cfmRes = readLineCancelable("确认删除这篇日记? (输入 yes 确认): ");
+            if (cfmRes.cancelled) continue;
+            if (cfmRes.value == "yes") {
                 store.removeEntry(entryIdx);
                 store.save(DIARY_PATH, password);
                 wprintln(L"[日记已删除]");
@@ -1019,7 +1143,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
         }
         // 返回
         else if (opChoice == (int)segCount + 5) {
-            break;
+            goto sel_day;
         }
         pauseScreen();
     }
@@ -1062,7 +1186,7 @@ static void importDiary(DiaryStore& store, const std::string& password) {
         {L"0. 返回", true},
     };
     int modeChoice = menuSelect(importModeItems, 1);
-    if (modeChoice == 3) return;
+    if (modeChoice == 3 || modeChoice == MENU_ESC) return;
 
     std::string rawText;
     if (modeChoice == 1) {
@@ -1314,7 +1438,7 @@ static void importDiary(DiaryStore& store, const std::string& password) {
         {L"0. 取消导入", true},
     };
     int conflictChoice = menuSelect(conflictItems, 1);
-    if (conflictChoice == 4) return;
+    if (conflictChoice == 4 || conflictChoice == MENU_ESC) return;
 
     if (conflictChoice == 1) {
         // 完全替换
@@ -1371,6 +1495,9 @@ static void exportImportMenu(DiaryStore& store, const std::string& password) {
         };
         int choice = menuSelect(items, 1);
         clearScreen();
+        if (choice == MENU_ESC || choice == 3) {
+            break;
+        }
         if (choice == 1) {
             exportDiary(store);
             pauseScreen();
@@ -1389,16 +1516,23 @@ static void changePasswordInteractive(const std::string& currentPass) {
     clearScreen();
     wprintln(L"══════════ 修改密码 ══════════");
 
-    std::string verify = readPassword("输入当前密码确认身份: ");
-    if (verify != currentPass) {
+    auto vRes = readPasswordCancelable("输入当前密码确认身份 (Esc 取消): ");
+    if (vRes.cancelled) return;
+    if (vRes.value != currentPass) {
         wprintln(L"身份验证失败!");
-        sodium_memzero(verify.data(), verify.size());
+        sodium_memzero(vRes.value.data(), vRes.value.size());
         return;
     }
-    sodium_memzero(verify.data(), verify.size());
+    sodium_memzero(vRes.value.data(), vRes.value.size());
 
-    std::string newPass = readPassword("输入新密码: ");
-    std::string newPassConfirm = readPassword("确认新密码: ");
+    auto nRes = readPasswordCancelable("输入新密码 (Esc 取消): ");
+    if (nRes.cancelled) return;
+    std::string newPass = nRes.value;
+
+    auto cRes = readPasswordCancelable("确认新密码 (Esc 取消): ");
+    if (cRes.cancelled) { sodium_memzero(newPass.data(), newPass.size()); return; }
+    std::string newPassConfirm = cRes.value;
+
     if (newPass != newPassConfirm) {
         wprintln(L"两次密码不一致!");
         sodium_memzero(newPass.data(), newPass.size());
@@ -1440,6 +1574,16 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
         };
 
         int choice = menuSelect(items, 3);
+
+        // Esc → 退出确认
+        if (choice == MENU_ESC) {
+            if (confirmExitBar()) {
+                store.save(DIARY_PATH, password);
+                wprintln(L"\n[日记已保存，再见!]  (^_^)");
+                return;
+            }
+            continue;
+        }
 
         switch (choice) {
             case 3:  // 写入/编辑今日
