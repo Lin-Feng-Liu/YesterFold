@@ -899,6 +899,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
 
         std::vector<MenuItem> opItems;
         opItems.push_back({L"--- 操作 ---", false});
+        opItems.push_back({L"查看日记（只读）", true});
         for (size_t si = 0; si < segs.size(); ++si) {
             std::string timeStr = segs[si].value("time", "");
             std::wstring label = L"编辑记录 " + std::to_wstring(si + 1) + L" (" + utf8_to_wstring(timeStr) + L")";
@@ -912,9 +913,15 @@ static void editByDate(DiaryStore& store, const std::string& password) {
         int opChoice = menuSelect(opItems, 1);
 
         size_t segCount = segs.size();
+        // 查看日记
+        if (opChoice == 1) {
+            clearScreen();
+            printDiary(entry);
+            pauseScreen();
+        }
         // 编辑某条记录
-        if (opChoice >= 1 && opChoice <= (int)segCount) {
-            int segIdx = opChoice - 1;
+        else if (opChoice >= 2 && opChoice <= (int)segCount + 1) {
+            int segIdx = opChoice - 2;
             std::string oldContent = segs[segIdx].value("content", "");
             std::wstring oldW = utf8_to_wstring(oldContent);
 
@@ -943,7 +950,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
             }
         }
         // 添加新记录
-        else if (opChoice == (int)segCount + 1) {
+        else if (opChoice == (int)segCount + 2) {
             std::string newTime = getCurrentTimeStr();
             nlohmann::json newSeg;
             newSeg["time"] = newTime;
@@ -981,7 +988,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
             }
         }
         // 删除某条记录
-        else if (opChoice == (int)segCount + 2) {
+        else if (opChoice == (int)segCount + 3) {
             if (segs.empty()) { wprintln(L"没有可删除的记录"); pauseScreen(); continue; }
             std::string sc = readLine("删除第几条记录? (1-" + std::to_string(segs.size()) + ", 0取消): ");
             size_t si;
@@ -1001,7 +1008,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
             }
         }
         // 删除整篇日记
-        else if (opChoice == (int)segCount + 3) {
+        else if (opChoice == (int)segCount + 4) {
             if (readLine("确认删除这篇日记? (输入 yes 确认): ") == "yes") {
                 store.removeEntry(entryIdx);
                 store.save(DIARY_PATH, password);
@@ -1011,7 +1018,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
             }
         }
         // 返回
-        else if (opChoice == (int)segCount + 4) {
+        else if (opChoice == (int)segCount + 5) {
             break;
         }
         pauseScreen();
