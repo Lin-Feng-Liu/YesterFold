@@ -403,9 +403,26 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent) {
         SetConsoleCursorPosition(hOut, cursorPos);
     };
 
+    // 在编辑区域底部显示确认提示
+    auto showConfirmBar = [&](bool visible) {
+        int barLine = csbi.dwSize.Y - 1;
+        COORD barPos = {0, (SHORT)barLine};
+        DWORD written;
+        FillConsoleOutputCharacterW(hOut, L' ', csbi.dwSize.X, barPos, &written);
+        FillConsoleOutputAttribute(hOut, csbi.wAttributes, csbi.dwSize.X, barPos, &written);
+        if (visible) {
+            SetConsoleCursorPosition(hOut, barPos);
+            SetConsoleTextAttribute(hOut, 0x70);
+            wprint(L"  Enter=确认保存    Esc=继续编辑  ");
+            SetConsoleTextAttribute(hOut, 0x07);
+        }
+    };
+
     renderEditor();
+    showConfirmBar(false);
 
     // 主输入循环
+    bool inConfirm = false;
     while (true) {
         INPUT_RECORD ir;
         DWORD read;
@@ -416,6 +433,24 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent) {
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
         DWORD ctrl = ir.Event.KeyEvent.dwControlKeyState;
         WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
+
+        // 确认模式：只接受 Enter 和 Esc
+        if (inConfirm) {
+            if (vk == VK_RETURN) {
+                showConfirmBar(false);
+                SetConsoleMode(hIn, oldInMode);
+                EditorResult result;
+                result.confirmed = true;
+                result.content = buf;
+                return result;
+            }
+            if (vk == VK_ESCAPE) {
+                inConfirm = false;
+                showConfirmBar(false);
+                renderEditor();
+            }
+            continue;
+        }
 
         // Shift+Enter → 插入换行
         if (vk == VK_RETURN && (ctrl & SHIFT_PRESSED)) {
@@ -433,13 +468,11 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent) {
             continue;
         }
 
-        // 普通 Enter → 确认
+        // 普通 Enter → 进入确认模式
         if (vk == VK_RETURN) {
-            SetConsoleMode(hIn, oldInMode);
-            EditorResult result;
-            result.confirmed = true;
-            result.content = buf;
-            return result;
+            inConfirm = true;
+            showConfirmBar(true);
+            continue;
         }
 
         // Esc → 取消
@@ -704,8 +737,6 @@ static void writeOrEditToday(DiaryStore& store, const std::string& password) {
 
     wprintln(L">> 新增时间: " + utf8_to_wstring(currentTime));
     wprintln(L"────────────────────────────────────");
-    wprintln(L"（在下方编辑区域书写日记）");
-    wprintln(L"Enter=确认  Shift+Enter=换行  Esc=取消");
     wprintln(L"══════════════════════════════════════");
 
     // 获取当前光标位置作为编辑区域起始
@@ -892,7 +923,6 @@ static void editByDate(DiaryStore& store, const std::string& password) {
             wprintln(L"时间: " + utf8_to_wstring(segs[segIdx].value("time", "")) + L";");
             wprintln(L"────────────────────────────────────");
             wprintln(L"（修改后的内容）");
-            wprintln(L"Enter=确认  Shift+Enter=换行  Esc=取消");
             wprintln(L"══════════════════════════════════════");
 
             CONSOLE_SCREEN_BUFFER_INFO csbi2;
@@ -925,7 +955,6 @@ static void editByDate(DiaryStore& store, const std::string& password) {
             wprintln(L"日期: " + utf8_to_wstring(std::to_string(ey) + "/" + std::to_string(em) + "/" + std::to_string(ed)));
             wprintln(L"新增时间: " + utf8_to_wstring(newTime) + L";");
             wprintln(L"────────────────────────────────────");
-            wprintln(L"Enter=确认  Shift+Enter=换行  Esc=取消");
             wprintln(L"══════════════════════════════════════");
 
             CONSOLE_SCREEN_BUFFER_INFO csbi3;
