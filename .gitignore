@@ -1,0 +1,24 @@
+# 编译产物
+diary.exe
+*.exe
+*.o
+*.obj
+
+# libsodium 第三方库 (需自行下载)
+lib/
+libsodium-*.dll
+*.a
+*.lib
+*.dll
+
+# 日记数据 (绝对不能提交!)
+data/
+*.enc
+*.txt
+
+# 临时文件
+*.tmp
+*.swp
+*.zip
+*.tar.gz
+*.pdb
