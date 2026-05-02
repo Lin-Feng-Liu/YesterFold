@@ -537,6 +537,13 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent) {
 
     // 主输入循环
     bool inConfirm = false;
+
+    // VT序列状态机：用于解析 CSI u 协议序列 (ESC [ <key> ; <mod> u)
+    bool vtCollecting = false;  // 正在收集VT序列
+    std::wstring vtNum;         // 当前正在读取的数字
+    int vtKey = 0;              // VT序列的key code
+    bool vtReadingMod = false;  // 是否正在读取modifier部分
+
     while (true) {
         INPUT_RECORD ir;
         DWORD read;
@@ -547,6 +554,68 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent) {
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
         DWORD ctrl = ir.Event.KeyEvent.dwControlKeyState;
         WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
+
+        // ── VT序列收集模式 ──
+        if (vtCollecting) {
+            if (ch >= L'0' && ch <= L'9') {
+                vtNum += ch;
+            } else if (ch == L'[' && vtNum.empty()) {
+                // 第二个字符，跳过（已经在ESC检测时处理了'['）
+            } else if (ch == L';' && !vtNum.empty()) {
+                vtKey = _wtoi(vtNum.c_str());
+                vtNum.clear();
+                vtReadingMod = true;
+            } else if (ch == L'u' && vtReadingMod) {
+                // 序列完整，解析modifier
+                int mod = vtNum.empty() ? 1 : _wtoi(vtNum.c_str());
+                vtCollecting = false;
+                // Shift+Enter: key=13, modifier bit 1 (shift) = 2
+                if (vtKey == 13 && (mod & 2)) {
+                    buf.insert(buf.begin() + cursor, L'\n');
+                    cursor++;
+                    renderEditor();
+                }
+                // 其他VT序列一律丢弃
+            } else {
+                // 非预期字符，终止收集
+                vtCollecting = false;
+            }
+            continue;
+        }
+
+        // ── ESC字符检测：区分ESC键和VT序列开头 ──
+        if (ch == 0x1B) {
+            DWORD avail = 0;
+            GetNumberOfConsoleInputEvents(hIn, &avail);
+            if (avail > 0) {
+                INPUT_RECORD peek;
+                DWORD peekRead;
+                if (PeekConsoleInputW(hIn, &peek, 1, &peekRead) && peekRead > 0) {
+                    if (peek.EventType == KEY_EVENT && peek.Event.KeyEvent.bKeyDown &&
+                        peek.Event.KeyEvent.uChar.UnicodeChar == L'[') {
+                        // 后面紧跟着'['，是VT序列开头，消费掉'['并开始收集
+                        ReadConsoleInputW(hIn, &peek, 1, &peekRead);
+                        vtCollecting = true;
+                        vtNum.clear();
+                        vtKey = 0;
+                        vtReadingMod = false;
+                        continue;
+                    }
+                }
+            }
+            // 没有紧跟字符，当作普通ESC键处理
+            if (inConfirm) {
+                inConfirm = false;
+                showConfirmBar(false);
+                renderEditor();
+                continue;
+            }
+            SetConsoleMode(hIn, oldInMode);
+            EditorResult result;
+            result.confirmed = false;
+            result.content = L"";
+            return result;
+        }
 
         // 确认模式：只接受 Enter 和 Esc
         if (inConfirm) {
