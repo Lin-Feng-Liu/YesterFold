@@ -24,6 +24,10 @@ public:
     bool removeEntry(size_t index);
     bool updateEntry(size_t index, const nlohmann::json& entry);
 
+    // 神秘计数器
+    int getCounter() const;
+    void setCounter(int value);
+
     // 返回按日期排序的条目索引
     std::vector<size_t> getSortedIndices() const;
 

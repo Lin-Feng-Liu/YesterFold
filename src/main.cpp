@@ -1624,6 +1624,58 @@ static void changePasswordInteractive(const std::string& currentPass) {
     sodium_memzero(newPass.data(), newPass.size());
 }
 
+// ─── 神秘计数器 ───
+
+static void counterPage(DiaryStore& store, const std::string& password) {
+    while (true) {
+        clearScreen();
+        int count = store.getCounter();
+
+        std::vector<MenuItem> items = {
+            {L"══════════════ 神秘计数器 ══════════════", false},
+            {L"", false},
+            {L"        当前计数: " + std::to_wstring(count), false},
+            {L"", false},
+            {L"────────────────────────────────────────", false},
+            {L"1. 次数加一", true},
+            {L"2. 手动设置次数", true},
+            {L"0. 返回", true},
+        };
+
+        int choice = menuSelect(items, 5);
+
+        if (choice == 7 || choice == MENU_ESC) break;
+
+        if (choice == 5) {
+            store.setCounter(count + 1);
+            store.save(DIARY_PATH, password);
+        } else if (choice == 6) {
+            auto scRes = readLineCancelable("输入新次数 (非负整数, Esc 取消): ");
+            if (scRes.cancelled || scRes.value.empty()) continue;
+
+            int newVal;
+            try {
+                newVal = std::stoi(scRes.value);
+            } catch (...) {
+                wprintln(L"输入无效，请输入整数");
+                pauseScreen();
+                continue;
+            }
+
+            if (newVal < 0) {
+                wprintln(L"次数不能为负数");
+                pauseScreen();
+                continue;
+            }
+
+            store.setCounter(newVal);
+            store.save(DIARY_PATH, password);
+            wprintln(L"[计数器已更新]");
+            pauseScreen();
+        }
+    }
+}
+
 // ─── 主循环 ───
 
 static void mainLoop(DiaryStore& store, const std::string& password) {
@@ -1638,7 +1690,8 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
             {L"3. 按日期编辑", true},
             {L"4. 导出 / 导入", true},
             {L"5. 修改密码", true},
-            {L"6. 保存并退出", true},
+            {L"6. 神秘计数器", true},
+            {L"7. 保存并退出", true},
             {L"==========================", false},
         };
 
@@ -1676,7 +1729,11 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
                 changePasswordInteractive(password);
                 pauseScreen();
                 break;
-            case 8:  // 保存并退出
+            case 8:  // 神秘计数器
+                clearScreen();
+                counterPage(store, password);
+                break;
+            case 9:  // 保存并退出
                 store.save(DIARY_PATH, password);
                 wprintln(L"\n[日记已保存，再见!]  (^_^)");
                 return;

@@ -55,6 +55,7 @@ void DiaryStore::initEmpty() {
     data_ = nlohmann::json::object();
     data_["version"] = 1;
     data_["entries"] = nlohmann::json::array();
+    data_["counter"] = 0;
     loaded_ = true;
 }
 
@@ -101,4 +102,13 @@ std::vector<size_t> DiaryStore::getSortedIndices() const {
         return da < db;
     });
     return indices;
+}
+
+int DiaryStore::getCounter() const {
+    if (!data_.contains("counter")) return 0;
+    return data_["counter"].get<int>();
+}
+
+void DiaryStore::setCounter(int value) {
+    data_["counter"] = value;
 }
