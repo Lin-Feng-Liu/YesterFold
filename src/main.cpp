@@ -1662,6 +1662,7 @@ int main() {
 
     g_hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     g_hIn  = GetStdHandle(STD_INPUT_HANDLE);
+    g_startTick = GetTickCount();
 
     if (!crypto::init()) {
         std::cerr << "加密库初始化失败!" << std::endl;

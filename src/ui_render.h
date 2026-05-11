@@ -7,6 +7,7 @@
 // ─── 全局控制台句柄 ───
 extern HANDLE g_hOut;
 extern HANDLE g_hIn;
+extern ULONGLONG g_startTick;
 
 // ─── 黑白终端配色方案 ───
 constexpr WORD AMBER      = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY; // 0x0F 亮白

@@ -4,6 +4,7 @@
 // ─── 全局句柄定义 ───
 HANDLE g_hOut = nullptr;
 HANDLE g_hIn  = nullptr;
+ULONGLONG g_startTick = 0;
 
 // ─── 基础工具实现 ───
 
