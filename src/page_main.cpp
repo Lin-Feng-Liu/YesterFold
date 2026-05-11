@@ -62,63 +62,50 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
     // ── ASCII Art DIARY (行 4-9) ──
     drawDiaryTitle(3, 4);
 
-    // ── 右侧指标区 ──
-    int metricsX = 58;
-    int metricsRow = 4;
-
-    writeAtColor(metricsX, metricsRow, L"[ TEMPORAL_METRICS ]", AMBER_DIM);
-    metricsRow++;
-
-    // DAY PROG
+    // ── VAULT_INTEGRITY (行 4-9, DIARY 右侧) ──
     {
-        std::wstringstream ss;
-        ss << L"> DAY PROG [";
-        writeAtColor(metricsX, metricsRow, ss.str(), AMBER);
-        int barX = metricsX + static_cast<int>(ss.str().size());
-        int barW = 18;
-        drawProgressBar(barX, metricsRow, barW, m.dayProgress);
-        int pctX = barX + barW + 1;
-        ss.str(L""); ss.clear();
-        ss << L"] " << std::fixed << std::setprecision(0) << m.dayProgress << L"%";
-        writeAtColor(pctX, metricsRow, ss.str(), AMBER);
-    }
-    metricsRow++;
-
-    // YEAR PROG
-    {
-        std::wstringstream ss;
-        ss << L"> YEAR PROG[";
-        writeAtColor(metricsX, metricsRow, ss.str(), AMBER);
-        int barX = metricsX + static_cast<int>(ss.str().size());
-        int barW = 18;
-        drawProgressBar(barX, metricsRow, barW, m.yearProgress);
-        int pctX = barX + barW + 1;
-        ss.str(L""); ss.clear();
-        ss << L"] " << std::fixed << std::setprecision(0) << m.yearProgress << L"%";
-        writeAtColor(pctX, metricsRow, ss.str(), AMBER);
-    }
-    metricsRow++;
-
-    // WEEK LOG
-    {
-        std::wstringstream ss;
-        ss << L"> WEEK LOG [";
-        writeAtColor(metricsX, metricsRow, ss.str(), AMBER);
-        int cellX = metricsX + static_cast<int>(ss.str().size());
-        for (int i = 0; i < 7; ++i) {
-            writeAtColor(cellX, metricsRow,
-                m.weekActivity[i] ? L"\u25CF " : L"\u25CB ",  // ● / ○
-                m.weekActivity[i] ? AMBER : AMBER_DIM);
-            cellX += 2;
+        int vaultY = 4;
+        int panelX = 58;
+        writeAtColor(panelX, vaultY, L"[ VAULT_INTEGRITY ]", AMBER_DIM);
+        {
+            int divLen2 = boxW - panelX - 2;
+            if (divLen2 > 0) fillLine(panelX, vaultY + 1, divLen2, L'\u2500', AMBER_DIM);
         }
-        writeAtColor(cellX, metricsRow, L"]", AMBER);
-        ss.str(L""); ss.clear();
-        ss << L" (" << m.weekCount << L"/7 DAYS)";
-        writeAtColor(cellX + 1, metricsRow, ss.str(), AMBER_DIM);
+
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        bool fileOk = GetFileAttributesExA(dataPath, GetFileExInfoStandard, &fad);
+        if (fileOk) {
+            ULONGLONG fsize = (static_cast<ULONGLONG>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+            std::wstringstream fss;
+            if (fsize < 1024)
+                fss << fsize << L" B";
+            else if (fsize < 1048576)
+                fss << std::fixed << std::setprecision(1) << (fsize / 1024.0) << L" KB";
+            else
+                fss << std::fixed << std::setprecision(1) << (fsize / 1048576.0) << L" MB";
+
+            FILETIME ftNow;
+            GetSystemTimeAsFileTime(&ftNow);
+            ULARGE_INTEGER unow, ufile;
+            unow.LowPart = ftNow.dwLowDateTime;  unow.HighPart = ftNow.dwHighDateTime;
+            ufile.LowPart = fad.ftLastWriteTime.dwLowDateTime;
+            ufile.HighPart = fad.ftLastWriteTime.dwHighDateTime;
+            LONGLONG diff100ns = unow.QuadPart - ufile.QuadPart;
+            int minAgo = static_cast<int>(diff100ns / 600000000LL);
+            std::wstring syncStr;
+            if (minAgo < 1) syncStr = L"just now";
+            else if (minAgo < 60) { std::wstringstream t; t << minAgo << L" min ago"; syncStr = t.str(); }
+            else { std::wstringstream t; t << (minAgo / 60) << L" h " << (minAgo % 60) << L" m ago"; syncStr = t.str(); }
+
+            writeAtColor(panelX, vaultY + 2, L"PATH  : " + utf8_to_wstring(std::string(dataPath)), AMBER);
+            writeAtColor(panelX, vaultY + 3, L"SIZE  : " + fss.str() + L" (Encrypted)", AMBER);
+            writeAtColor(panelX, vaultY + 4, L"STATE : XChaCha20-Poly1305 [LOCKED]", AMBER);
+            writeAtColor(panelX, vaultY + 5, L"SYNC  : Last save " + syncStr, AMBER);
+        }
     }
 
     // ── 菜单框 + 活动日志区 ──
-    int menuBoxX = 6;
+    int menuBoxX = 10;
     int menuBoxY = 11;
     int menuBoxW = 28;
     int menuBoxH = 12;
@@ -187,46 +174,61 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
         writeAtColor(actX, statY, ss.str(), AMBER);
     }
 
-    // ── VAULT_INTEGRITY 区块（右侧面板） ──
+    // ── TEMPORAL_METRICS (ACTIVITY LOG 下方隔 1 行) ──
     {
-        int vaultY = menuBoxY + 7 + m.monthWeeks;
-        if (vaultY + 5 <= boxH - 3) {
-            int panelX = 58;
-            writeAtColor(panelX, vaultY, L"[ VAULT_INTEGRITY ]", AMBER_DIM);
+        int metricsY = menuBoxY + 5 + m.monthWeeks;
+        if (metricsY + 3 <= boxH - 3) {
+            int metricsX = 58;
+
+            writeAtColor(metricsX, metricsY, L"[ TEMPORAL_METRICS ]", AMBER_DIM);
+            metricsY++;
+
+            // DAY PROG
             {
-                int divLen2 = boxW - panelX - 2;
-                if (divLen2 > 0) fillLine(panelX, vaultY + 1, divLen2, L'\u2500', AMBER_DIM);
+                std::wstringstream ss;
+                ss << L"> DAY PROG [";
+                writeAtColor(metricsX, metricsY, ss.str(), AMBER);
+                int barX = metricsX + static_cast<int>(ss.str().size());
+                int barW = 18;
+                drawProgressBar(barX, metricsY, barW, m.dayProgress);
+                int pctX = barX + barW + 1;
+                ss.str(L""); ss.clear();
+                ss << L"] " << std::fixed << std::setprecision(0) << m.dayProgress << L"%";
+                writeAtColor(pctX, metricsY, ss.str(), AMBER);
             }
+            metricsY++;
 
-            WIN32_FILE_ATTRIBUTE_DATA fad;
-            bool fileOk = GetFileAttributesExA(dataPath, GetFileExInfoStandard, &fad);
-            if (fileOk) {
-                ULONGLONG fsize = (static_cast<ULONGLONG>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
-                std::wstringstream fss;
-                if (fsize < 1024)
-                    fss << fsize << L" B";
-                else if (fsize < 1048576)
-                    fss << std::fixed << std::setprecision(1) << (fsize / 1024.0) << L" KB";
-                else
-                    fss << std::fixed << std::setprecision(1) << (fsize / 1048576.0) << L" MB";
+            // YEAR PROG
+            {
+                std::wstringstream ss;
+                ss << L"> YEAR PROG[";
+                writeAtColor(metricsX, metricsY, ss.str(), AMBER);
+                int barX = metricsX + static_cast<int>(ss.str().size());
+                int barW = 18;
+                drawProgressBar(barX, metricsY, barW, m.yearProgress);
+                int pctX = barX + barW + 1;
+                ss.str(L""); ss.clear();
+                ss << L"] " << std::fixed << std::setprecision(0) << m.yearProgress << L"%";
+                writeAtColor(pctX, metricsY, ss.str(), AMBER);
+            }
+            metricsY++;
 
-                FILETIME ftNow;
-                GetSystemTimeAsFileTime(&ftNow);
-                ULARGE_INTEGER unow, ufile;
-                unow.LowPart = ftNow.dwLowDateTime;  unow.HighPart = ftNow.dwHighDateTime;
-                ufile.LowPart = fad.ftLastWriteTime.dwLowDateTime;
-                ufile.HighPart = fad.ftLastWriteTime.dwHighDateTime;
-                LONGLONG diff100ns = unow.QuadPart - ufile.QuadPart;
-                int minAgo = static_cast<int>(diff100ns / 600000000LL);
-                std::wstring syncStr;
-                if (minAgo < 1) syncStr = L"just now";
-                else if (minAgo < 60) { std::wstringstream t; t << minAgo << L" min ago"; syncStr = t.str(); }
-                else { std::wstringstream t; t << (minAgo / 60) << L" h " << (minAgo % 60) << L" m ago"; syncStr = t.str(); }
-
-                writeAtColor(panelX, vaultY + 2, L"PATH  : " + utf8_to_wstring(std::string(dataPath)), AMBER);
-                writeAtColor(panelX, vaultY + 3, L"SIZE  : " + fss.str() + L" (Encrypted)", AMBER);
-                writeAtColor(panelX, vaultY + 4, L"STATE : XChaCha20-Poly1305 [LOCKED]", AMBER);
-                writeAtColor(panelX, vaultY + 5, L"SYNC  : Last save " + syncStr, AMBER);
+            // WEEK LOG
+            {
+                std::wstringstream ss;
+                ss << L"> WEEK LOG [";
+                writeAtColor(metricsX, metricsY, ss.str(), AMBER);
+                int cellX = metricsX + static_cast<int>(ss.str().size());
+                for (int i = 0; i < 7; ++i) {
+                    writeAtColor(cellX, metricsY,
+                        m.weekActivity[i] ? L"\u25CF " : L"\u25CB ",
+                        m.weekActivity[i] ? AMBER : AMBER_DIM);
+                    cellX += 2;
+                }
+                writeAtColor(cellX, metricsY, L"]", AMBER);
+                ss.str(L""); ss.clear();
+                ss << L" (" << m.weekCount << L"/7 DAYS)";
+                writeAtColor(cellX + 1, metricsY, ss.str(), AMBER_DIM);
             }
         }
     }
