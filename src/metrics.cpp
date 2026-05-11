@@ -73,7 +73,7 @@ DiaryMetrics computeMetrics(const DiaryStore& store) {
         uli.HighPart = ft.dwHighDateTime;
         // 100纳秒 * 10000 * 1000 * 60 * 60 * 24 = 一天
         LONG64 delta = static_cast<LONG64>(6 - i) * 864000000000LL;
-        uli.QuadPart += delta;
+        uli.QuadPart -= delta;
         ft.dwLowDateTime = uli.LowPart;
         ft.dwHighDateTime = uli.HighPart;
         FileTimeToSystemTime(&ft, &st);

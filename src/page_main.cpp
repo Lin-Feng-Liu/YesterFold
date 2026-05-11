@@ -102,7 +102,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
     // WEEK LOG
     {
         std::wstringstream ss;
-        ss << L"> WEEK LOG  [";
+        ss << L"> WEEK LOG [";
         writeAtColor(metricsX, metricsRow, ss.str(), AMBER);
         int cellX = metricsX + static_cast<int>(ss.str().size());
         for (int i = 0; i < 7; ++i) {
@@ -118,7 +118,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
     }
 
     // ── 菜单框 + 活动日志区 ──
-    int menuBoxX = 3;
+    int menuBoxX = 6;
     int menuBoxY = 11;
     int menuBoxW = 28;
     int menuBoxH = 12;
@@ -189,7 +189,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
 
     // ── VAULT_INTEGRITY 区块（右侧面板） ──
     {
-        int vaultY = menuBoxY + 5 + m.monthWeeks;
+        int vaultY = menuBoxY + 7 + m.monthWeeks;
         if (vaultY + 5 <= boxH - 3) {
             int panelX = 58;
             writeAtColor(panelX, vaultY, L"[ VAULT_INTEGRITY ]", AMBER_DIM);
@@ -223,11 +223,10 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
                 else if (minAgo < 60) { std::wstringstream t; t << minAgo << L" min ago"; syncStr = t.str(); }
                 else { std::wstringstream t; t << (minAgo / 60) << L" h " << (minAgo % 60) << L" m ago"; syncStr = t.str(); }
 
-                int cx = panelX + 2;
-                writeAtColor(cx, vaultY + 2, L"PATH  : " + utf8_to_wstring(std::string(dataPath)), AMBER_DIM);
-                writeAtColor(cx, vaultY + 3, L"SIZE  : " + fss.str() + L" (Encrypted)", AMBER_DIM);
-                writeAtColor(cx, vaultY + 4, L"STATE : XChaCha20-Poly1305 [LOCKED]", AMBER_DIM);
-                writeAtColor(cx, vaultY + 5, L"SYNC  : Last save " + syncStr, AMBER_DIM);
+                writeAtColor(panelX, vaultY + 2, L"PATH  : " + utf8_to_wstring(std::string(dataPath)), AMBER);
+                writeAtColor(panelX, vaultY + 3, L"SIZE  : " + fss.str() + L" (Encrypted)", AMBER);
+                writeAtColor(panelX, vaultY + 4, L"STATE : XChaCha20-Poly1305 [LOCKED]", AMBER);
+                writeAtColor(panelX, vaultY + 5, L"SYNC  : Last save " + syncStr, AMBER);
             }
         }
     }
