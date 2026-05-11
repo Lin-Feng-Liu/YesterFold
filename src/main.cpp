@@ -1530,7 +1530,7 @@ static void counterPage(DiaryStore& store, const std::string& password) {
 static void mainLoop(DiaryStore& store, const std::string& password) {
     while (true) {
         DiaryMetrics m = computeMetrics(store);
-        MainPageLayout layout = renderMainPage(m);
+        MainPageLayout layout = renderMainPage(m, DIARY_PATH);
 
         std::vector<MenuItem> menuItems = {
             {L"1. 写入 / 编辑今日", true},

@@ -8,4 +8,4 @@ struct MainPageLayout {
 
 // 渲染主页面静态内容（框架、标题、ASCII Art、进度条、热力图、命令栏）
 // 返回菜单区域坐标供 menuSelectInRegion 使用
-MainPageLayout renderMainPage(const DiaryMetrics& m);
+MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath);

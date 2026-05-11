@@ -17,8 +17,8 @@ static void drawMainFrame(int x, int y, int w, int h) {
     writeAtColor(x + w - 1, y + 2, L"\u2563", AMBER);
 
     for (int row = 3; row < h - 1; ++row) {
-        writeAtColor(x, row, L"\u2551", AMBER);
-        writeAtColor(x + w - 1, row, L"\u2551", AMBER);
+        writeAtColor(x, y + row, L"\u2551", AMBER);
+        writeAtColor(x + w - 1, y + row, L"\u2551", AMBER);
     }
 
     writeAtColor(x, y + h - 1, L"\u255A", AMBER);
@@ -32,13 +32,13 @@ static const wchar_t* monthNames[] = {
     L"SEPTEMBER", L"OCTOBER", L"NOVEMBER", L"DECEMBER"
 };
 
-MainPageLayout renderMainPage(const DiaryMetrics& m) {
+MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
     int screenW = csbi.dwSize.X;
     int screenH = csbi.dwSize.Y;
 
-    int minW = 88, minH = 25;
+    int minW = 88, minH = 32;
     int boxW = (screenW < minW) ? minW : screenW;
     int boxH = (screenH < minH) ? minH : screenH;
 
@@ -63,7 +63,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m) {
     drawDiaryTitle(3, 4);
 
     // ── 右侧指标区 ──
-    int metricsX = 46;
+    int metricsX = 58;
     int metricsRow = 4;
 
     writeAtColor(metricsX, metricsRow, L"[ TEMPORAL_METRICS ]", AMBER_DIM);
@@ -127,14 +127,14 @@ MainPageLayout renderMainPage(const DiaryMetrics& m) {
 
     // 活动日志标签
     {
-        int actX = 46;
+        int actX = 58;
         std::wstring label = L"[ " + std::wstring(monthNames[m.currentMonth]) + L" ACTIVITY LOG ]";
         writeAtColor(actX, menuBoxY, label, AMBER_DIM);
     }
 
     // 分隔线
     {
-        int actX = 46;
+        int actX = 58;
         int divLen = boxW - actX - 2;
         if (divLen > 0) fillLine(actX, menuBoxY + 1, divLen, L'\u2500', AMBER_DIM);
     }
@@ -144,7 +144,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m) {
     int todayWeek = (m.currentDay - 1) / 7 + 1;
     for (int wk = 0; wk < m.monthWeeks; ++wk) {
         int weekY = menuBoxY + 2 + wk;
-        int actX = 46;
+        int actX = 58;
 
         std::wstringstream ss;
         ss << L"WEEK " << (wk + 1) << L": ";
@@ -171,7 +171,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m) {
     // 统计分隔线
     {
         int statDivY = menuBoxY + 2 + m.monthWeeks;
-        int actX = 46;
+        int actX = 58;
         int divLen = boxW - actX - 2;
         if (divLen > 0) fillLine(actX, statDivY, divLen, L'\u2500', AMBER_DIM);
     }
@@ -179,12 +179,57 @@ MainPageLayout renderMainPage(const DiaryMetrics& m) {
     // TOTAL / STREAK / AVG
     {
         int statY = menuBoxY + 3 + m.monthWeeks;
-        int actX = 46;
+        int actX = 58;
         std::wstringstream ss;
         ss << L"TOTAL: " << m.totalEntries
            << L"  |  STREAK: " << m.streak
            << L"  |  AVG: " << m.avgChars;
         writeAtColor(actX, statY, ss.str(), AMBER);
+    }
+
+    // ── VAULT_INTEGRITY 区块（右侧面板） ──
+    {
+        int vaultY = menuBoxY + 5 + m.monthWeeks;
+        if (vaultY + 5 <= boxH - 3) {
+            int panelX = 58;
+            writeAtColor(panelX, vaultY, L"[ VAULT_INTEGRITY ]", AMBER_DIM);
+            {
+                int divLen2 = boxW - panelX - 2;
+                if (divLen2 > 0) fillLine(panelX, vaultY + 1, divLen2, L'\u2500', AMBER_DIM);
+            }
+
+            WIN32_FILE_ATTRIBUTE_DATA fad;
+            bool fileOk = GetFileAttributesExA(dataPath, GetFileExInfoStandard, &fad);
+            if (fileOk) {
+                ULONGLONG fsize = (static_cast<ULONGLONG>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+                std::wstringstream fss;
+                if (fsize < 1024)
+                    fss << fsize << L" B";
+                else if (fsize < 1048576)
+                    fss << std::fixed << std::setprecision(1) << (fsize / 1024.0) << L" KB";
+                else
+                    fss << std::fixed << std::setprecision(1) << (fsize / 1048576.0) << L" MB";
+
+                FILETIME ftNow;
+                GetSystemTimeAsFileTime(&ftNow);
+                ULARGE_INTEGER unow, ufile;
+                unow.LowPart = ftNow.dwLowDateTime;  unow.HighPart = ftNow.dwHighDateTime;
+                ufile.LowPart = fad.ftLastWriteTime.dwLowDateTime;
+                ufile.HighPart = fad.ftLastWriteTime.dwHighDateTime;
+                LONGLONG diff100ns = unow.QuadPart - ufile.QuadPart;
+                int minAgo = static_cast<int>(diff100ns / 600000000LL);
+                std::wstring syncStr;
+                if (minAgo < 1) syncStr = L"just now";
+                else if (minAgo < 60) { std::wstringstream t; t << minAgo << L" min ago"; syncStr = t.str(); }
+                else { std::wstringstream t; t << (minAgo / 60) << L" h " << (minAgo % 60) << L" m ago"; syncStr = t.str(); }
+
+                int cx = panelX + 2;
+                writeAtColor(cx, vaultY + 2, L"PATH  : " + utf8_to_wstring(std::string(dataPath)), AMBER_DIM);
+                writeAtColor(cx, vaultY + 3, L"SIZE  : " + fss.str() + L" (Encrypted)", AMBER_DIM);
+                writeAtColor(cx, vaultY + 4, L"STATE : XChaCha20-Poly1305 [LOCKED]", AMBER_DIM);
+                writeAtColor(cx, vaultY + 5, L"SYNC  : Last save " + syncStr, AMBER_DIM);
+            }
+        }
     }
 
     // ── 命令栏 ──
