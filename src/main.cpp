@@ -9,6 +9,9 @@
 #include <sodium.h>
 #include "crypto.h"
 #include "diary_store.h"
+#include "ui_render.h"
+#include "metrics.h"
+#include "page_main.h"
 
 static const char* DIARY_PATH       = "data\\diary.enc";
 static const char* EXPORT_TXT_PATH  = "data\\export_diary.txt";
@@ -16,65 +19,6 @@ static const char* IMPORT_TXT_PATH  = "data\\import_diary.txt";
 
 static const int MODE_EXIT   = 0;
 static const int MODE_SWITCH = 1;
-static const int MENU_ESC    = -2;
-
-static HANDLE g_hOut = nullptr;
-static HANDLE g_hIn  = nullptr;
-
-// ─── UTF-8 与 wstring 互转 ───
-
-static std::wstring utf8_to_wstring(const std::string& utf8) {
-    if (utf8.empty()) return L"";
-    int len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
-    if (len <= 0) return L"";
-    std::wstring result(len, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), &result[0], len);
-    return result;
-}
-
-static std::string wstring_to_utf8(const std::wstring& wstr) {
-    if (wstr.empty()) return "";
-    int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), static_cast<int>(wstr.size()), nullptr, 0, nullptr, nullptr);
-    if (len <= 0) return "";
-    std::string result(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), static_cast<int>(wstr.size()), &result[0], len, nullptr, nullptr);
-    return result;
-}
-
-// ─── 宽字符屏幕宽度 ───
-
-static int wcharWidth(wchar_t ch) {
-    if (ch == L'\n' || ch == L'\r') return 0;
-    if (ch < 0x20) return 0;
-    // 中文等全角字符
-    if (ch >= 0x4E00 && ch <= 0x9FFF) return 2;
-    if (ch >= 0x3000 && ch <= 0x303F) return 2; // CJK标点
-    if (ch >= 0xFF00 && ch <= 0xFFEF) return 2; // 全角形式
-    if (ch >= 0x2000 && ch <= 0x206F) return 2; // 通用标点(含EM DASH)
-    if (ch == 0x2014) return 2;  // EM DASH —
-    if (ch < 0x80) return 1;
-    return 2; // 其他非ASCII默认宽字符
-}
-
-// ─── 直接输出宽字符（不依赖 C++ 流 locale） ───
-
-static void wprint(const std::wstring& s) {
-    DWORD written;
-    WriteConsoleW(g_hOut, s.c_str(), (DWORD)s.size(), &written, NULL);
-}
-
-static void wprintln(const std::wstring& s) {
-    wprint(s);
-    wprint(L"\r\n");
-}
-
-static void wprintln() {
-    wprint(L"\r\n");
-}
-
-// ─── 控制台工具 ───
-
-static void clearScreen() { system("cls"); }
 
 static void pauseScreen() {
     FlushConsoleInputBuffer(g_hIn);
@@ -202,101 +146,6 @@ static std::string readMultiLine(const std::string& prompt) {
         result += line + "\n";
     }
     return result;
-}
-
-// ─── 方向键菜单 (复用旧项目逻辑) ───
-
-struct MenuItem {
-    std::wstring text;
-    bool selectable;
-};
-
-static int menuSelect(const std::vector<MenuItem>& items, int startIdx = 0) {
-    std::vector<int> si;
-    for (int i = 0; i < (int)items.size(); i++)
-        if (items[i].selectable) si.push_back(i);
-    if (si.empty()) return -1;
-
-    int selPos = 0;
-    for (int i = 0; i < (int)si.size(); i++) {
-        if (si[i] == startIdx) { selPos = i; break; }
-    }
-
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    DWORD bufSize = csbi.dwSize.X * csbi.dwSize.Y;
-    SHORT screenW = csbi.dwSize.X;
-
-    int prevSelIdx = -1;
-
-    // 用 Wide 函数操作控制台
-    auto clearLineW = [&](int lineIdx) {
-        COORD pos = {0, (SHORT)lineIdx}; DWORD written;
-        FillConsoleOutputCharacterW(g_hOut, L' ', screenW, pos, &written);
-        FillConsoleOutputAttribute(g_hOut, csbi.wAttributes, screenW, pos, &written);
-        SetConsoleCursorPosition(g_hOut, pos);
-    };
-
-    auto drawLineW = [&](int itemIdx, bool highlight) {
-        clearLineW(itemIdx);
-        if (highlight) {
-            SetConsoleTextAttribute(g_hOut, 0x70);
-            wprint(L"> "); wprint(items[itemIdx].text);
-            SetConsoleTextAttribute(g_hOut, 0x07);
-        } else {
-            wprint(L"  "); wprint(items[itemIdx].text);
-        }
-    };
-
-    auto fullRenderW = [&]() {
-        COORD pos = {0, 0}; DWORD written;
-        FillConsoleOutputCharacterW(g_hOut, L' ', bufSize, pos, &written);
-        FillConsoleOutputAttribute(g_hOut, csbi.wAttributes, bufSize, pos, &written);
-        SetConsoleCursorPosition(g_hOut, pos);
-        for (int i = 0; i < (int)items.size(); i++) {
-            drawLineW(i, i == si[selPos]);
-            wprintln();
-        }
-        prevSelIdx = si[selPos];
-    };
-
-    fullRenderW();
-    while (true) {
-        int ch = _getch();
-        if (ch == 0xE0 || ch == 0) {
-            int key = _getch();
-            int oldIdx = (prevSelIdx >= 0) ? prevSelIdx : -1;
-            if (key == 0x48) {
-                selPos = (selPos - 1 + (int)si.size()) % (int)si.size();
-                if (oldIdx >= 0) drawLineW(oldIdx, false);
-                drawLineW(si[selPos], true);
-                prevSelIdx = si[selPos];
-            } else if (key == 0x50) {
-                selPos = (selPos + 1) % (int)si.size();
-                if (oldIdx >= 0) drawLineW(oldIdx, false);
-                drawLineW(si[selPos], true);
-                prevSelIdx = si[selPos];
-            }
-        } else if (ch == '\r') {
-            return si[selPos];
-        } else if (ch == 27) {
-            // Esc → 返回上一级
-            return MENU_ESC;
-        } else if (ch >= '0' && ch <= '9') {
-            for (int i = 0; i < (int)items.size(); i++) {
-                if (!items[i].selectable) continue;
-                std::wstring t = items[i].text;
-                size_t pos = t.find_first_not_of(L" ");
-                if (pos != std::wstring::npos && t[pos] == (wchar_t)ch &&
-                    pos + 1 < t.size() && (t[pos+1] == L'.' || t[pos+1] == L' ')) {
-                    for (int j = 0; j < (int)si.size(); j++) {
-                        if (si[j] == i) { selPos = j; break; }
-                    }
-                    return si[selPos];
-                }
-            }
-        }
-    }
 }
 
 // ─── 退出确认条 ───
@@ -1680,11 +1529,10 @@ static void counterPage(DiaryStore& store, const std::string& password) {
 
 static void mainLoop(DiaryStore& store, const std::string& password) {
     while (true) {
-        clearScreen();
-        std::vector<MenuItem> items = {
-            {L"==========================", false},
-            {L"|       日记本           |", false},
-            {L"==========================", false},
+        DiaryMetrics m = computeMetrics(store);
+        MainPageLayout layout = renderMainPage(m);
+
+        std::vector<MenuItem> menuItems = {
             {L"1. 写入 / 编辑今日", true},
             {L"2. 查看全部", true},
             {L"3. 按日期编辑", true},
@@ -1692,48 +1540,44 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
             {L"5. 修改密码", true},
             {L"6. 神秘计数器", true},
             {L"7. 保存并退出", true},
-            {L"==========================", false},
         };
 
-        int choice = menuSelect(items, 3);
+        int choice = menuSelectInRegion(
+            layout.menuX, layout.menuY,
+            layout.menuW, layout.menuH,
+            menuItems, 0);
 
-        // Esc → 退出确认
         if (choice == MENU_ESC) {
-            if (confirmExitBar()) {
-                store.save(DIARY_PATH, password);
-                wprintln(L"\n[日记已保存，再见!]  (^_^)");
-                return;
-            }
             continue;
         }
 
         switch (choice) {
-            case 3:  // 写入/编辑今日
+            case 0:  // 写入/编辑今日
                 clearScreen();
                 writeOrEditToday(store, password);
                 pauseScreen();
                 break;
-            case 4:  // 查看全部
+            case 1:  // 查看全部
                 clearScreen();
                 viewAllDiaries(store);
                 pauseScreen();
                 break;
-            case 5:  // 按日期编辑
+            case 2:  // 按日期编辑
                 clearScreen();
                 editByDate(store, password);
                 break;
-            case 6:  // 导出/导入
+            case 3:  // 导出/导入
                 exportImportMenu(store, password);
                 break;
-            case 7:  // 修改密码
+            case 4:  // 修改密码
                 changePasswordInteractive(password);
                 pauseScreen();
                 break;
-            case 8:  // 神秘计数器
+            case 5:  // 神秘计数器
                 clearScreen();
                 counterPage(store, password);
                 break;
-            case 9:  // 保存并退出
+            case 6:  // 保存并退出
                 store.save(DIARY_PATH, password);
                 wprintln(L"\n[日记已保存，再见!]  (^_^)");
                 return;
