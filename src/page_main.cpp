@@ -233,7 +233,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
                 }
                 writeAtColor(cellX, metricsY, L"]", AMBER);
                 ss.str(L""); ss.clear();
-                ss << L" (" << m.weekCount << L"/7 DAYS)";
+                ss << L" (" << m.weekCount << L"/7 THIS WEEK)";
                 writeAtColor(cellX + 1, metricsY, ss.str(), AMBER_DIM);
             }
         }
@@ -247,34 +247,8 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
             double secs = elapsed / 1000.0;
 
             wchar_t line1[80];
-            swprintf(line1, 80, L"  SESSION %.1fs  |  ENC LOCKED", secs);
-
-            WIN32_FILE_ATTRIBUTE_DATA fad;
-            bool fileOk = GetFileAttributesExA(dataPath, GetFileExInfoStandard, &fad);
-            wchar_t line2[80] = L"  FILE ---  |  SYNC ---";
-
-            if (fileOk) {
-                ULONGLONG fsize = (static_cast<ULONGLONG>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
-                std::wstringstream fss;
-                if (fsize < 1024) fss << fsize << L" B";
-                else if (fsize < 1048576) fss << std::fixed << std::setprecision(1) << (fsize / 1024.0) << L" KB";
-                else fss << std::fixed << std::setprecision(1) << (fsize / 1048576.0) << L" MB";
-
-                FILETIME ftNow;
-                GetSystemTimeAsFileTime(&ftNow);
-                ULARGE_INTEGER unow, ufile;
-                unow.LowPart = ftNow.dwLowDateTime;  unow.HighPart = ftNow.dwHighDateTime;
-                ufile.LowPart = fad.ftLastWriteTime.dwLowDateTime;
-                ufile.HighPart = fad.ftLastWriteTime.dwHighDateTime;
-                LONGLONG diff100ns = unow.QuadPart - ufile.QuadPart;
-                int minAgo = static_cast<int>(diff100ns / 600000000LL);
-                std::wstring syncStr;
-                if (minAgo < 1) syncStr = L"just now";
-                else if (minAgo < 60) { std::wstringstream t; t << minAgo << L"m ago"; syncStr = t.str(); }
-                else { std::wstringstream t; t << (minAgo / 60) << L"h " << (minAgo % 60) << L"m ago"; syncStr = t.str(); }
-
-                swprintf(line2, 80, L"  FILE %s  |  SYNC %s", fss.str().c_str(), syncStr.c_str());
-            }
+            swprintf(line1, 80, L"  UPTIME %.1fs", secs);
+            wchar_t line2[80] = L"  STATUS IDLE";
 
             writeAtColor(3, logY, line1, AMBER_DIM);
             writeAtColor(3, logY + 1, line2, AMBER_DIM);
@@ -286,6 +260,8 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
     {
         std::wstring prompt = L">> AWAITING_COMMAND...";
         writeAtColor(3, cmdY, prompt, AMBER);
+        COORD cursorPos = {static_cast<SHORT>(3 + prompt.size()), static_cast<SHORT>(cmdY)};
+        SetConsoleCursorPosition(g_hOut, cursorPos);
     }
 
     // 返回菜单区域坐标（内边距）

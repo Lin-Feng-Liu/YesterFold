@@ -61,24 +61,29 @@ DiaryMetrics computeMetrics(const DiaryStore& store) {
     m.yearProgress = static_cast<double>((doy - 1) * 86400 + secondsToday)
                      / static_cast<double>(yearDays * 86400) * 100.0;
 
-    // ── WEEK LOG (最近 7 天) ──
+    // ── WEEK LOG (本周 Mon-Sun) ──
     m.weekCount = 0;
-    for (int i = 0; i < 7; ++i) {
-        // 计算偏移日期：i=0 是 6 天前，i=6 是今天
-        FILETIME ft;
-        GetSystemTimeAsFileTime(&ft);
-        // 将当前时间减去 (6-i) 天
-        ULARGE_INTEGER uli;
-        uli.LowPart = ft.dwLowDateTime;
-        uli.HighPart = ft.dwHighDateTime;
-        // 100纳秒 * 10000 * 1000 * 60 * 60 * 24 = 一天
-        LONG64 delta = static_cast<LONG64>(6 - i) * 864000000000LL;
-        uli.QuadPart -= delta;
-        ft.dwLowDateTime = uli.LowPart;
-        ft.dwHighDateTime = uli.HighPart;
-        FileTimeToSystemTime(&ft, &st);
+    SYSTEMTIME localNow;
+    GetLocalTime(&localNow);
+    FILETIME nowFtLocal;
+    SystemTimeToFileTime(&localNow, &nowFtLocal);
+    ULARGE_INTEGER weekBase;
+    weekBase.LowPart = nowFtLocal.dwLowDateTime;
+    weekBase.HighPart = nowFtLocal.dwHighDateTime;
 
-        int idx = store.findEntry(st.wYear, st.wMonth, st.wDay);
+    int mondayIndex = (localNow.wDayOfWeek + 6) % 7; // Sun=0 -> 6, Mon=1 -> 0
+    weekBase.QuadPart -= static_cast<ULONGLONG>(mondayIndex) * 864000000000ULL;
+
+    for (int i = 0; i < 7; ++i) {
+        ULARGE_INTEGER dayTick = weekBase;
+        dayTick.QuadPart += static_cast<ULONGLONG>(i) * 864000000000ULL;
+        FILETIME ft;
+        ft.dwLowDateTime = dayTick.LowPart;
+        ft.dwHighDateTime = dayTick.HighPart;
+
+        SYSTEMTIME daySt;
+        FileTimeToSystemTime(&ft, &daySt);
+        int idx = store.findEntry(daySt.wYear, daySt.wMonth, daySt.wDay);
         m.weekActivity[i] = (idx >= 0);
         if (m.weekActivity[i]) m.weekCount++;
     }

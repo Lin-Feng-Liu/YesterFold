@@ -294,6 +294,12 @@ int menuSelectInRegion(int x, int y, int w, int h,
     int visibleCount = (int)items.size();
     if (visibleCount > h) visibleCount = h;
 
+    CONSOLE_CURSOR_INFO oldCursorInfo{};
+    GetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+    CONSOLE_CURSOR_INFO hiddenCursor = oldCursorInfo;
+    hiddenCursor.bVisible = FALSE;
+    SetConsoleCursorInfo(g_hOut, &hiddenCursor);
+
     auto drawItemLine = [&](int itemIdx, bool highlight) {
         int screenY = y + itemIdx;
         if (screenY >= y + h) return;
@@ -333,9 +339,11 @@ int menuSelectInRegion(int x, int y, int w, int h,
             }
         } else if (ch == '\r') {
             SetConsoleTextAttribute(g_hOut, ATTR_NORMAL);
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
             return si[selPos];
         } else if (ch == 27) {
             SetConsoleTextAttribute(g_hOut, ATTR_NORMAL);
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
             return MENU_ESC;
         } else if (ch >= '0' && ch <= '9') {
             for (int i = 0; i < static_cast<int>(items.size()); ++i) {
@@ -348,6 +356,7 @@ int menuSelectInRegion(int x, int y, int w, int h,
                         if (si[j] == i) { selPos = j; break; }
                     }
                     SetConsoleTextAttribute(g_hOut, ATTR_NORMAL);
+                    SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
                     return si[selPos];
                 }
             }

@@ -21,9 +21,16 @@ static const char* IMPORT_TXT_PATH  = "data\\import_diary.txt";
 static const int MODE_EXIT   = 0;
 static const int MODE_SWITCH = 1;
 
+constexpr WORD ACCESS_WARN_ATTR   = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+constexpr WORD ACCESS_DANGER_ATTR = FOREGROUND_RED | FOREGROUND_INTENSITY;
+
 static void pauseScreen() {
     FlushConsoleInputBuffer(g_hIn);
-    wprint(L"\n按任意键继续...");
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+    int pauseY = std::max(1, static_cast<int>(csbi.dwSize.Y) - 2);
+    fillLine(1, pauseY, csbi.dwSize.X - 2, L' ', ATTR_NORMAL);
+    writeAtColor(3, pauseY, L"按任意键继续...", AMBER);
     DWORD oldMode; GetConsoleMode(g_hIn, &oldMode);
     SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
     while (true) {
@@ -32,6 +39,7 @@ static void pauseScreen() {
         if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) break;
     }
     SetConsoleMode(g_hIn, oldMode);
+    fillLine(1, pauseY, csbi.dwSize.X - 2, L' ', ATTR_NORMAL);
 }
 
 static std::string readPassword(const std::string& prompt);
@@ -65,20 +73,33 @@ struct EditorScreenConfig {
     std::wstring timeLine = L"SLOT : --:--";
     std::wstring modeLine = L"MODE : EDIT";
     std::vector<std::wstring> historyLines;
+    std::wstring emptyHistoryText = L"NO PRIOR SEGMENTS.";
+    bool adaptiveHistory = false;
+    bool projectBufferToHistory = false;
+    std::wstring livePreviewTime = L"";
+    int minEditInnerH = 8;
 };
 
 struct EditorShellLayout {
+    int historyX;
+    int historyY;
+    int historyW;
+    int historyH;
     int editX;
     int editY;
     int editW;
     int editH;
     int statusY;
+    int contentBottom;
+    std::vector<std::wstring> wrappedHistoryLines;
 };
 
 static AccessPageLayout renderAccessPage(const std::wstring& headline,
                                          const std::wstring& promptLabel,
                                          const std::vector<std::wstring>& statusLines,
-                                         const std::wstring& modeLabel);
+                                         const std::wstring& modeLabel,
+                                         WORD promptBoxAttr = AMBER);
+static std::string readLoginPassword(int failedAttempts, int maxAttempts);
 
 static std::wstring fitTextToWidth(const std::wstring& text, int maxWidth) {
     if (maxWidth <= 0) return L"";
@@ -127,6 +148,28 @@ static std::vector<std::wstring> wrapDisplayText(const std::wstring& text, int m
     return lines;
 }
 
+static std::vector<std::wstring> splitDisplayLines(const std::wstring& text,
+                                                   const std::wstring& prefix = L"") {
+    std::vector<std::wstring> lines;
+    std::wstring current = prefix;
+    bool touched = false;
+
+    for (wchar_t ch : text) {
+        if (ch == L'\r') continue;
+        if (ch == L'\n') {
+            lines.push_back(current);
+            current = prefix;
+            touched = true;
+            continue;
+        }
+        current.push_back(ch);
+        touched = true;
+    }
+
+    if (touched || !prefix.empty()) lines.push_back(current);
+    return lines;
+}
+
 static void drawTerminalShell(const std::wstring& envLabel) {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
@@ -156,6 +199,8 @@ static InputResult readPasswordFieldAt(int x, int y, bool allowEscape) {
     SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
 
     std::wstring wpass;
+    COORD startPos = {static_cast<SHORT>(x), static_cast<SHORT>(y)};
+    SetConsoleCursorPosition(g_hOut, startPos);
     while (true) {
         INPUT_RECORD ir; DWORD read;
         if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
@@ -198,7 +243,36 @@ static std::string readPassword(const std::string& prompt) {
             L"STATE : XChaCha20-Poly1305 [LOCKED]",
             L"NOTICE: local-only encrypted diary",
         },
-        L"LOGIN"
+        L"LOGIN",
+        AMBER
+    );
+    auto result = readPasswordFieldAt(layout.fieldX, layout.fieldY, false);
+    return result.value;
+}
+
+static std::string readLoginPassword(int failedAttempts, int maxAttempts) {
+    WORD promptAttr = AMBER;
+    if (failedAttempts == 1) promptAttr = ACCESS_WARN_ATTR;
+    else if (failedAttempts >= 2) promptAttr = ACCESS_DANGER_ATTR;
+
+    std::vector<std::wstring> status = {
+        L"TARGET: data\\diary.enc",
+        L"STATE : XChaCha20-Poly1305 [LOCKED]",
+    };
+    if (failedAttempts <= 0) {
+        status.push_back(L"NOTICE: local-only encrypted diary");
+    } else {
+        int remain = maxAttempts - failedAttempts;
+        status.push_back(L"ALERT : invalid credential detected");
+        status.push_back(L"REMAIN: " + std::to_wstring(remain) + L" attempt(s)");
+    }
+
+    AccessPageLayout layout = renderAccessPage(
+        L"VAULT LOCKED // CREDENTIAL REQUIRED",
+        L"输入密码:",
+        status,
+        L"LOGIN",
+        promptAttr
     );
     auto result = readPasswordFieldAt(layout.fieldX, layout.fieldY, false);
     return result.value;
@@ -207,7 +281,8 @@ static std::string readPassword(const std::string& prompt) {
 static AccessPageLayout renderAccessPage(const std::wstring& headline,
                                          const std::wstring& promptLabel,
                                          const std::vector<std::wstring>& statusLines,
-                                         const std::wstring& modeLabel) {
+                                         const std::wstring& modeLabel,
+                                         WORD promptBoxAttr) {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
     int boxW = csbi.dwSize.X;
@@ -232,6 +307,16 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
     int promptBoxH = 7;
     if (boxY + promptBoxH >= boxH - 2) boxY = boxH - promptBoxH - 3;
     drawSingleBox(boxX, boxY, promptBoxW, promptBoxH);
+    writeAtColor(boxX, boxY, L"┌", promptBoxAttr);
+    writeAtColor(boxX + promptBoxW - 1, boxY, L"┐", promptBoxAttr);
+    writeAtColor(boxX, boxY + promptBoxH - 1, L"└", promptBoxAttr);
+    writeAtColor(boxX + promptBoxW - 1, boxY + promptBoxH - 1, L"┘", promptBoxAttr);
+    fillLine(boxX + 1, boxY, promptBoxW - 2, L'─', promptBoxAttr);
+    fillLine(boxX + 1, boxY + promptBoxH - 1, promptBoxW - 2, L'─', promptBoxAttr);
+    for (int row = 1; row < promptBoxH - 1; ++row) {
+        writeAtColor(boxX, boxY + row, L"│", promptBoxAttr);
+        writeAtColor(boxX + promptBoxW - 1, boxY + row, L"│", promptBoxAttr);
+    }
     writeAtColor(boxX + 2, boxY - 1, L"[ PASSWORD_ENTRY ]", AMBER_DIM);
     writeAtColor(boxX + 2, boxY + 1, promptLabel, AMBER);
     writeAtColor(boxX + 2, boxY + 3, L">> ", AMBER);
@@ -260,51 +345,65 @@ static EditorShellLayout renderEditorShell(const EditorScreenConfig& cfg) {
     writeAtColor(4, 8, cfg.timeLine, AMBER);
     writeAtColor(4, 9, cfg.modeLine, AMBER);
 
-    int leftX = 4;
-    int panelY = 11;
-    int leftW = 34;
-    int rightX = leftX + leftW + 2;
-    int rightW = boxW - rightX - 4;
-    int panelH = boxH - panelY - 5;
+    int panelX = 4;
+    int panelW = boxW - 8;
+    int contentTop = 11;
+    int contentBottom = boxH - 5;
+    int availableContentH = contentBottom - contentTop + 1;
+    if (availableContentH < 10) availableContentH = 10;
 
-    if (rightW < 28) {
-        leftW = 28;
-        rightX = leftX + leftW + 2;
-        rightW = boxW - rightX - 4;
-    }
-    if (panelH < 8) panelH = 8;
-
-    drawSingleBox(leftX, panelY, leftW, panelH);
-    drawSingleBox(rightX, panelY, rightW, panelH);
-    writeAtColor(leftX + 2, panelY - 1, L"[ TODAY_LOG ]", AMBER_DIM);
-    writeAtColor(rightX + 2, panelY - 1, L"[ INPUT_STREAM ]", AMBER_DIM);
-
-    int historyW = leftW - 4;
-    int historyY = panelY + 1;
-    int historyBottom = panelY + panelH - 2;
+    int innerW = panelW - 4;
+    std::vector<std::wstring> wrappedHistoryLines;
     if (cfg.historyLines.empty()) {
-        writeAtColor(leftX + 2, historyY, L"NO PRIOR SEGMENTS.", AMBER_DIM);
+        wrappedHistoryLines.push_back(cfg.emptyHistoryText);
     } else {
-        for (const std::wstring& raw : cfg.historyLines) {
-            std::vector<std::wstring> wrapped = wrapDisplayText(raw, historyW);
-            for (const auto& line : wrapped) {
-                if (historyY > historyBottom) break;
-                writeAtColor(leftX + 2, historyY, fitTextToWidth(line, historyW), AMBER);
-                historyY++;
-            }
-            if (historyY > historyBottom) break;
+        for (const auto& raw : cfg.historyLines) {
+            std::vector<std::wstring> wrapped = wrapDisplayText(raw, innerW);
+            wrappedHistoryLines.insert(wrappedHistoryLines.end(), wrapped.begin(), wrapped.end());
         }
     }
 
-    writeAtColor(3, boxH - 3, L"Ctrl+Enter / Shift+Enter=换行  Enter=保存确认  Esc=取消", AMBER_DIM);
-    writeAtColor(3, boxH - 2, L">> INPUT_STREAM READY", AMBER);
+    int minEditInnerH = cfg.minEditInnerH;
+    int reservedGap = 3;
+    int maxHistoryInnerH = std::max(4, availableContentH - minEditInnerH - reservedGap);
+    int historyInnerH = std::max(6, maxHistoryInnerH);
+    if (!cfg.adaptiveHistory) {
+        historyInnerH = std::min<int>(std::max(6, availableContentH / 2), maxHistoryInnerH);
+    }
+    historyInnerH = std::min(historyInnerH, maxHistoryInnerH);
+
+    int historyBoxH = historyInnerH + 2;
+    int editBoxY = contentTop + historyBoxH + 1;
+    int editBoxH = contentBottom - editBoxY + 1;
+    if (editBoxH < minEditInnerH + 2) {
+        editBoxH = minEditInnerH + 2;
+        historyBoxH = contentBottom - editBoxH - contentTop;
+        if (historyBoxH < 6) historyBoxH = 6;
+        historyInnerH = historyBoxH - 2;
+        editBoxY = contentTop + historyBoxH + 1;
+        editBoxH = contentBottom - editBoxY + 1;
+    }
+
+    drawSingleBox(panelX, contentTop, panelW, historyBoxH);
+    drawSingleBox(panelX, editBoxY, panelW, editBoxH);
+    writeAtColor(panelX + 2, contentTop - 1, L"[ TODAY_LOG ]", AMBER_DIM);
+    writeAtColor(panelX + 2, editBoxY - 1, L"[ INPUT ]", AMBER_DIM);
+
+    writeAtColor(3, boxH - 3, L"TODAY_LOG显示完整日志流  |  Ctrl+Enter / Shift+Enter=换行  Enter=保存确认  Esc=取消", AMBER_DIM);
+    writeAtColor(3, boxH - 2, L">> INPUT READY", AMBER);
 
     EditorShellLayout layout;
-    layout.editX = rightX + 2;
-    layout.editY = panelY + 1;
-    layout.editW = rightW - 4;
-    layout.editH = panelH - 2;
+    layout.historyX = panelX + 2;
+    layout.historyY = contentTop + 1;
+    layout.historyW = panelW - 4;
+    layout.historyH = historyInnerH;
+    layout.editX = panelX + 2;
+    layout.editY = editBoxY + 1;
+    layout.editW = panelW - 4;
+    layout.editH = editBoxH - 2;
     layout.statusY = boxH - 2;
+    layout.contentBottom = contentBottom;
+    layout.wrappedHistoryLines = wrappedHistoryLines;
     return layout;
 }
 
@@ -317,7 +416,8 @@ static InputResult readPasswordCancelable(const std::string& prompt) {
             L"INPUT remains hidden in memory",
             L"RETURN to continue authentication",
         },
-        L"VERIFY"
+        L"VERIFY",
+        AMBER
     );
     return readPasswordFieldAt(layout.fieldX, layout.fieldY, true);
 }
@@ -544,12 +644,57 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
     size_t cursor = buf.size();
 
     EditorShellLayout shell = renderEditorShell(cfg);
+    int historyScroll = 0;
     int editStartLine = shell.editY;
     int editStartCol = shell.editX;
     int editWidth = shell.editW;
     int maxEditLines = shell.editH;
     if (editWidth < 10) editWidth = screenW - 4;
     if (maxEditLines < 3) maxEditLines = std::max<SHORT>(3, screenH - editStartLine - 3);
+
+    auto renderHistory = [&]() {
+        std::vector<std::wstring> lines = shell.wrappedHistoryLines;
+        if (cfg.projectBufferToHistory) {
+            lines.push_back(L"");
+            std::wstring liveTitle = cfg.livePreviewTime.empty()
+                ? L"[CURRENT INPUT]"
+                : L"[" + cfg.livePreviewTime + L"]";
+            lines.push_back(liveTitle);
+
+            std::vector<std::wstring> projected = splitDisplayLines(buf, L"  ");
+            if (projected.empty()) projected.push_back(L"  ");
+            for (const auto& rawLine : projected) {
+                std::vector<std::wstring> wrapped = wrapDisplayText(rawLine, shell.historyW);
+                if (wrapped.empty()) wrapped.push_back(L"");
+                for (const auto& line : wrapped) {
+                    lines.push_back(line);
+                }
+            }
+        }
+
+        fillRegion(shell.historyX, shell.historyY, shell.historyW, shell.historyH, L' ', ATTR_NORMAL);
+
+        int total = static_cast<int>(lines.size());
+        int visible = shell.historyH;
+        int maxScroll = std::max(0, total - visible);
+        if (historyScroll < 0) historyScroll = 0;
+        if (historyScroll > maxScroll) historyScroll = maxScroll;
+
+        for (int i = 0; i < visible && i + historyScroll < total; ++i) {
+            bool isEmptyHint = cfg.historyLines.empty() && !cfg.projectBufferToHistory;
+            WORD attr = isEmptyHint ? AMBER_DIM : AMBER;
+            writeAtColor(shell.historyX, shell.historyY + i,
+                         fitTextToWidth(lines[i + historyScroll], shell.historyW), attr);
+        }
+
+        if (maxScroll > 0) {
+            std::wstring hint = L"HISTORY " + std::to_wstring(historyScroll + 1) + L"-" +
+                                std::to_wstring(std::min(total, historyScroll + visible)) +
+                                L" / " + std::to_wstring(total) + L"  Alt+Up/Down滚动";
+            writeAtColor(shell.historyX, shell.historyY + shell.historyH - 1,
+                         fitTextToWidth(hint, shell.historyW), AMBER_DIM);
+        }
+    };
 
     auto renderEditor = [&]() {
         // 计算行信息
@@ -589,25 +734,29 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         SetConsoleCursorPosition(hOut, cursorPos);
     };
 
+    auto setStatusLine = [&](const std::wstring& text, WORD attr) {
+        fillLine(1, shell.statusY, screenW - 2, L' ', ATTR_NORMAL);
+        writeAtColor(3, shell.statusY, fitTextToWidth(text, screenW - 6), attr);
+    };
+
+    auto redrawPanels = [&]() {
+        renderHistory();
+        renderEditor();
+    };
+
     // 在编辑区域底部显示确认提示
     auto showConfirmBar = [&](bool visible) {
-        int barLine = screenH - 2;
-        COORD barPos = {0, (SHORT)barLine};
-        DWORD written;
-        FillConsoleOutputCharacterW(hOut, L' ', screenW, barPos, &written);
-        FillConsoleOutputAttribute(hOut, ATTR_NORMAL, screenW, barPos, &written);
         if (visible) {
-            SetConsoleCursorPosition(hOut, barPos);
-            SetConsoleTextAttribute(hOut, 0x70);
-            wprint(L"  SAVE_BUFFER?  Enter=确认保存    Esc=继续编辑  ");
-            SetConsoleTextAttribute(hOut, 0x07);
+            fillLine(1, shell.statusY, screenW - 2, L' ', ATTR_NORMAL);
+            writeAtColor(3, shell.statusY, L"SAVE_BUFFER?  Enter=确认保存    Esc=继续编辑", 0x70);
         } else {
-            writeAtColor(3, shell.statusY, L">> INPUT_STREAM READY", AMBER);
+            setStatusLine(L">> INPUT READY", AMBER);
         }
     };
 
-    renderEditor();
+    redrawPanels();
     showConfirmBar(false);
+    renderEditor();
 
     // 主输入循环
     bool inConfirm = false;
@@ -647,7 +796,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
                 if (vtKey == 13 && (mod & 2)) {
                     buf.insert(buf.begin() + cursor, L'\n');
                     cursor++;
-                    renderEditor();
+                    redrawPanels();
                 }
                 // 其他VT序列一律丢弃
             } else {
@@ -681,7 +830,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             if (inConfirm) {
                 inConfirm = false;
                 showConfirmBar(false);
-                renderEditor();
+                redrawPanels();
                 continue;
             }
             SetConsoleMode(hIn, oldInMode);
@@ -704,7 +853,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             if (vk == VK_ESCAPE) {
                 inConfirm = false;
                 showConfirmBar(false);
-                renderEditor();
+                redrawPanels();
             }
             continue;
         }
@@ -713,7 +862,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         if (vk == VK_RETURN && (ctrl & SHIFT_PRESSED)) {
             buf.insert(buf.begin() + cursor, L'\n');
             cursor++;
-            renderEditor();
+            redrawPanels();
             continue;
         }
 
@@ -721,7 +870,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         if (vk == VK_RETURN && (ctrl & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED))) {
             buf.insert(buf.begin() + cursor, L'\n');
             cursor++;
-            renderEditor();
+            redrawPanels();
             continue;
         }
 
@@ -741,11 +890,23 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             return result;
         }
 
+        if ((ctrl & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) && vk == VK_UP) {
+            historyScroll--;
+            redrawPanels();
+            continue;
+        }
+
+        if ((ctrl & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) && vk == VK_DOWN) {
+            historyScroll++;
+            redrawPanels();
+            continue;
+        }
+
         // 左箭头
         if (vk == VK_LEFT) {
             if (cursor > 0) {
                 cursor--;
-                renderEditor();
+                redrawPanels();
             }
             continue;
         }
@@ -754,7 +915,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         if (vk == VK_RIGHT) {
             if (cursor < buf.size()) {
                 cursor++;
-                renderEditor();
+                redrawPanels();
             }
             continue;
         }
@@ -766,7 +927,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             findCursorPos(buf, cursor, lines, editWidth, cr, cc);
             if (cr > 0) {
                 cursor = rowColToIndex(buf, lines, cr - 1, cc, editWidth);
-                renderEditor();
+                redrawPanels();
             }
             continue;
         }
@@ -778,7 +939,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             findCursorPos(buf, cursor, lines, editWidth, cr, cc);
             if (cr < (int)lines.size() - 1) {
                 cursor = rowColToIndex(buf, lines, cr + 1, cc, editWidth);
-                renderEditor();
+                redrawPanels();
             }
             continue;
         }
@@ -790,7 +951,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             findCursorPos(buf, cursor, lines, editWidth, cr, cc);
             size_t lineStart = lines[cr].startIdx;
             cursor = lineStart;
-            renderEditor();
+            redrawPanels();
             continue;
         }
 
@@ -803,7 +964,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             if (lineEnd > buf.size()) lineEnd = buf.size();
             if (lineEnd > lines[cr].startIdx && buf[lineEnd - 1] == L'\n') lineEnd--;
             cursor = lineEnd;
-            renderEditor();
+            redrawPanels();
             continue;
         }
 
@@ -812,7 +973,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             if (cursor > 0) {
                 cursor--;
                 buf.erase(buf.begin() + cursor);
-                renderEditor();
+                redrawPanels();
             }
             continue;
         }
@@ -821,7 +982,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         if (vk == VK_DELETE) {
             if (cursor < buf.size()) {
                 buf.erase(buf.begin() + cursor);
-                renderEditor();
+                redrawPanels();
             }
             continue;
         }
@@ -830,10 +991,37 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         if (ch >= L' ' || (ch >= 0x4E00 && ch <= 0x9FFF) || (ch >= 0x3000 && ch <= 0x303F) || (ch >= 0xFF00 && ch <= 0xFFEF)) {
             buf.insert(buf.begin() + cursor, ch);
             cursor++;
-            renderEditor();
+            redrawPanels();
             continue;
         }
     }
+}
+
+static void showFullScreenMessage(const std::wstring& title,
+                                  const std::vector<std::wstring>& lines,
+                                  const std::wstring& prompt = L"按任意键继续...") {
+    drawTerminalShell(L"STATUS.PANEL // LOCAL_DIARY_ENV");
+    int boxX = 6;
+    int boxY = 6;
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+    int boxW = csbi.dwSize.X - 12;
+    int boxH = std::max(8, static_cast<int>(lines.size()) + 6);
+    if (boxY + boxH >= csbi.dwSize.Y - 2) boxH = csbi.dwSize.Y - boxY - 3;
+
+    drawSingleBox(boxX, boxY, boxW, boxH);
+    writeAtColor(boxX + 2, boxY - 1, L"[ " + title + L" ]", AMBER_DIM);
+
+    int y = boxY + 2;
+    for (const auto& line : lines) {
+        if (y >= boxY + boxH - 2) break;
+        writeAtColor(boxX + 2, y, fitTextToWidth(line, boxW - 4), AMBER);
+        y++;
+    }
+
+    fillLine(1, csbi.dwSize.Y - 2, csbi.dwSize.X - 2, L' ', ATTR_NORMAL);
+    writeAtColor(3, csbi.dwSize.Y - 2, prompt, AMBER);
 }
 
 // ─── 日期工具 ───
@@ -993,6 +1181,11 @@ static void writeOrEditToday(DiaryStore& store, const std::string& password) {
     cfg.timeLine = L"SLOT : " + utf8_to_wstring(currentTime) + L";";
     cfg.modeLine = isNew ? L"MODE : CREATE NEW ENTRY" : L"MODE : APPEND NEW SEGMENT";
     cfg.historyLines = historyLines;
+    cfg.adaptiveHistory = true;
+    cfg.emptyHistoryText = L"TODAY LOG EMPTY. START WRITING.";
+    cfg.projectBufferToHistory = true;
+    cfg.livePreviewTime = utf8_to_wstring(currentTime);
+    cfg.minEditInnerH = 5;
 
     EditorResult result = openDiaryEditor(L"", cfg);
 
@@ -1008,18 +1201,20 @@ static void writeOrEditToday(DiaryStore& store, const std::string& password) {
             // 更新最后一个segment
             store.entries()[idx]["segments"].back()["content"] = wstring_to_utf8(result.content);
             store.save(DIARY_PATH, password);
-            wprintln(L"\n[日记已保存]  (^_^)");
+            showFullScreenMessage(L"WRITE COMPLETE", {L"[日记已保存]"});
+            pauseScreen();
         } else {
             // 内容为空，删除自动添加的segment
             auto& segs = store.entries()[idx]["segments"];
             segs.erase(segs.size() - 1);
             if (segs.empty()) {
                 store.removeEntry(idx);
-                wprintln(L"\n[未输入内容，已取消]");
+                showFullScreenMessage(L"WRITE CANCELLED", {L"[未输入内容，已取消]"});
             } else {
-                wprintln(L"\n[未输入新内容，保留已有记录]");
+                showFullScreenMessage(L"WRITE SKIPPED", {L"[未输入新内容，保留已有记录]"});
             }
             store.save(DIARY_PATH, password);
+            pauseScreen();
         }
     } else {
         // 用户取消（Esc）
@@ -1028,7 +1223,8 @@ static void writeOrEditToday(DiaryStore& store, const std::string& password) {
         } else {
             store.removeEntry(idx);
         }
-        wprintln(L"\n[已取消]");
+        showFullScreenMessage(L"WRITE CANCELLED", {L"[已取消]"});
+        pauseScreen();
     }
 }
 
@@ -1193,9 +1389,9 @@ sel_day:
                 }
                 segs[segIdx]["content"] = wstring_to_utf8(er.content);
                 store.save(DIARY_PATH, password);
-                wprintln(L"\n[记录已更新]  (^_^)");
+                showFullScreenMessage(L"SEGMENT UPDATED", {L"[记录已更新]"});
             } else {
-                wprintln(L"\n[已取消]");
+                showFullScreenMessage(L"EDIT CANCELLED", {L"[已取消]"});
             }
         }
         // 添加新记录
@@ -1226,14 +1422,14 @@ sel_day:
                 if (!trimmed.empty()) {
                     segs.back()["content"] = wstring_to_utf8(er.content);
                     store.save(DIARY_PATH, password);
-                    wprintln(L"\n[记录已添加]");
+                    showFullScreenMessage(L"SEGMENT ADDED", {L"[记录已添加]"});
                 } else {
                     segs.erase(segs.size() - 1);
-                    wprintln(L"\n[未输入内容，已取消]");
+                    showFullScreenMessage(L"ADD CANCELLED", {L"[未输入内容，已取消]"});
                 }
             } else {
                 segs.erase(segs.size() - 1);
-                wprintln(L"\n[已取消]");
+                showFullScreenMessage(L"ADD CANCELLED", {L"[已取消]"});
             }
         }
         // 删除某条记录
@@ -1767,7 +1963,6 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
             case 0:  // 写入/编辑今日
                 clearScreen();
                 writeOrEditToday(store, password);
-                pauseScreen();
                 break;
             case 1:  // 查看全部
                 clearScreen();
@@ -1836,7 +2031,7 @@ static int loginLoop() {
 
     const int MAX_ATTEMPTS = 3;
     for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
-        std::string password = readPassword("输入密码 (" + std::to_string(MAX_ATTEMPTS - attempt) + "次机会): ");
+        std::string password = readLoginPassword(attempt, MAX_ATTEMPTS);
 
         DiaryStore store;
         if (store.load(DIARY_PATH, password)) {
@@ -1845,11 +2040,11 @@ static int loginLoop() {
             return MODE_EXIT;
         }
 
-        wprintln(L"密码错误!");
+        showFullScreenMessage(L"ACCESS WARNING", {L"密码错误!"}, L"按任意键继续...");
         sodium_memzero(password.data(), password.size());
         if (attempt < MAX_ATTEMPTS - 1) pauseScreen();
     }
-    wprintln(L"\n尝试次数过多，程序退出。");
+    showFullScreenMessage(L"ACCESS DENIED", {L"尝试次数过多，程序退出。"}, L"按任意键继续...");
     pauseScreen();
     return MODE_EXIT;
 }
