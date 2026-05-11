@@ -38,9 +38,9 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
     int screenW = csbi.dwSize.X;
     int screenH = csbi.dwSize.Y;
 
-    int minW = 88, minH = 32;
+    int minW = 88;
     int boxW = (screenW < minW) ? minW : screenW;
-    int boxH = (screenH < minH) ? minH : screenH;
+    int boxH = screenH;
 
     clearScreen();
     fillRegion(0, 0, boxW, boxH, L' ', ATTR_NORMAL);
