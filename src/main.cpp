@@ -94,6 +94,11 @@ struct EditorShellLayout {
     std::vector<std::wstring> wrappedHistoryLines;
 };
 
+struct RenderedLine {
+    std::wstring text;
+    WORD attr = ATTR_NORMAL;
+};
+
 static AccessPageLayout renderAccessPage(const std::wstring& headline,
                                          const std::wstring& promptLabel,
                                          const std::vector<std::wstring>& statusLines,
@@ -168,6 +173,15 @@ static std::vector<std::wstring> splitDisplayLines(const std::wstring& text,
 
     if (touched || !prefix.empty()) lines.push_back(current);
     return lines;
+}
+
+static std::wstring padOrTrimText(const std::wstring& text, int width) {
+    if (width <= 0) return L"";
+    std::wstring fitted = fitTextToWidth(text, width);
+    int used = 0;
+    for (wchar_t ch : fitted) used += wcharWidth(ch);
+    if (used < width) fitted.append(width - used, L' ');
+    return fitted;
 }
 
 static void drawTerminalShell(const std::wstring& envLabel) {
@@ -652,6 +666,30 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
     if (editWidth < 10) editWidth = screenW - 4;
     if (maxEditLines < 3) maxEditLines = std::max<SHORT>(3, screenH - editStartLine - 3);
 
+    std::vector<RenderedLine> prevHistoryFrame(shell.historyH);
+    std::vector<RenderedLine> prevEditorFrame(maxEditLines);
+    bool historyFrameInit = false;
+    bool editorFrameInit = false;
+
+    auto paintRenderedFrame = [&](int x, int y, int width,
+                                  const std::vector<RenderedLine>& nextFrame,
+                                  std::vector<RenderedLine>& prevFrame,
+                                  bool& initialized) {
+        if (!initialized || prevFrame.size() != nextFrame.size()) {
+            prevFrame.assign(nextFrame.size(), RenderedLine{});
+            initialized = false;
+        }
+
+        for (size_t i = 0; i < nextFrame.size(); ++i) {
+            if (!initialized || prevFrame[i].text != nextFrame[i].text || prevFrame[i].attr != nextFrame[i].attr) {
+                writeAtColor(x, y + static_cast<int>(i), padOrTrimText(nextFrame[i].text, width), nextFrame[i].attr);
+            }
+        }
+
+        prevFrame = nextFrame;
+        initialized = true;
+    };
+
     auto renderHistory = [&]() {
         std::vector<std::wstring> lines = shell.wrappedHistoryLines;
         if (cfg.projectBufferToHistory) {
@@ -672,28 +710,31 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
             }
         }
 
-        fillRegion(shell.historyX, shell.historyY, shell.historyW, shell.historyH, L' ', ATTR_NORMAL);
-
         int total = static_cast<int>(lines.size());
         int visible = shell.historyH;
         int maxScroll = std::max(0, total - visible);
         if (historyScroll < 0) historyScroll = 0;
         if (historyScroll > maxScroll) historyScroll = maxScroll;
 
+        std::vector<RenderedLine> nextFrame(visible);
+
         for (int i = 0; i < visible && i + historyScroll < total; ++i) {
             bool isEmptyHint = cfg.historyLines.empty() && !cfg.projectBufferToHistory;
             WORD attr = isEmptyHint ? AMBER_DIM : AMBER;
-            writeAtColor(shell.historyX, shell.historyY + i,
-                         fitTextToWidth(lines[i + historyScroll], shell.historyW), attr);
+            nextFrame[i].text = lines[i + historyScroll];
+            nextFrame[i].attr = attr;
         }
 
         if (maxScroll > 0) {
             std::wstring hint = L"HISTORY " + std::to_wstring(historyScroll + 1) + L"-" +
                                 std::to_wstring(std::min(total, historyScroll + visible)) +
                                 L" / " + std::to_wstring(total) + L"  Alt+Up/Down滚动";
-            writeAtColor(shell.historyX, shell.historyY + shell.historyH - 1,
-                         fitTextToWidth(hint, shell.historyW), AMBER_DIM);
+            nextFrame[shell.historyH - 1].text = hint;
+            nextFrame[shell.historyH - 1].attr = AMBER_DIM;
         }
+
+        paintRenderedFrame(shell.historyX, shell.historyY, shell.historyW,
+                           nextFrame, prevHistoryFrame, historyFrameInit);
     };
 
     auto renderEditor = [&]() {
@@ -702,19 +743,14 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         int cursorRow, cursorCol;
         findCursorPos(buf, cursor, lines, editWidth, cursorRow, cursorCol);
 
-        // 清空编辑区域
-        fillRegion(editStartCol, editStartLine, editWidth, maxEditLines, L' ', ATTR_NORMAL);
-
         // 滚动: 确保光标行可见
         int scrollOff = 0;
         if (cursorRow >= maxEditLines) scrollOff = cursorRow - maxEditLines + 1;
 
+        std::vector<RenderedLine> nextFrame(maxEditLines);
+
         // 绘制可见行
         for (int li = scrollOff; li < (int)lines.size() && (li - scrollOff) < maxEditLines; ++li) {
-            COORD pos = {(SHORT)editStartCol, (SHORT)(editStartLine + li - scrollOff)};
-            SetConsoleCursorPosition(hOut, pos);
-            SetConsoleTextAttribute(hOut, AMBER);
-
             size_t lineStart = lines[li].startIdx;
             size_t lineEnd = (li + 1 < (int)lines.size()) ? lines[li + 1].startIdx : buf.size();
             if (lineEnd > buf.size()) lineEnd = buf.size();
@@ -724,8 +760,14 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
                 if (buf[ci] == L'\n') break;
                 lineText += buf[ci];
             }
-            wprint(lineText);
+
+            int frameIdx = li - scrollOff;
+            nextFrame[frameIdx].text = lineText;
+            nextFrame[frameIdx].attr = AMBER;
         }
+
+        paintRenderedFrame(editStartCol, editStartLine, editWidth,
+                           nextFrame, prevEditorFrame, editorFrameInit);
 
         // 设置光标位置
         int cursorScreenRow = editStartLine + cursorRow - scrollOff;
