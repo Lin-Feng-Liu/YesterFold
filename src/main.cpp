@@ -96,6 +96,22 @@ struct EditorShellLayout {
     std::vector<std::wstring> wrappedHistoryLines;
 };
 
+struct RegionMenuLayout {
+    int menuX;
+    int menuY;
+    int menuW;
+    int menuH;
+};
+
+struct DateEntryPageLayout {
+    int previewX;
+    int previewY;
+    int previewW;
+    int previewH;
+    int statusY;
+    RegionMenuLayout menu;
+};
+
 struct RenderedLine {
     std::wstring text;
     WORD attr = ATTR_NORMAL;
@@ -227,6 +243,167 @@ static CenteredRect drawTerminalShell(const std::wstring& envLabel, bool fixedCe
     writeAtColor(boxX + boxW - 1, boxY + 2, L"╣", AMBER);
 
     return {boxX, boxY, boxW, boxH};
+}
+
+static void writeWrappedPanelLines(int x, int y, int w, int h,
+                                   const std::vector<std::wstring>& logicalLines,
+                                   WORD attr = AMBER) {
+    if (w <= 0 || h <= 0) return;
+
+    std::vector<std::wstring> wrappedLines;
+    int wrapW = getAdaptiveWrapWidth(w);
+    if (wrapW <= 0) wrapW = w;
+
+    for (const auto& raw : logicalLines) {
+        if (raw.empty()) {
+            wrappedLines.push_back(L"");
+            continue;
+        }
+        std::vector<std::wstring> wrapped = wrapDisplayText(raw, wrapW);
+        if (wrapped.empty()) wrapped.push_back(L"");
+        wrappedLines.insert(wrappedLines.end(), wrapped.begin(), wrapped.end());
+    }
+
+    for (int row = 0; row < h; ++row) {
+        fillLine(x, y + row, w, L' ', ATTR_NORMAL);
+        if (row < static_cast<int>(wrappedLines.size())) {
+            writeAtColor(x, y + row, padOrTrimText(wrappedLines[row], w), attr);
+        }
+    }
+}
+
+static int menuSelectScrollableInRegion(int x, int y, int w, int h,
+                                        const std::vector<MenuItem>& items,
+                                        int startIdx = 0) {
+    std::vector<int> selectableIndices;
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        if (items[i].selectable) selectableIndices.push_back(i);
+    }
+    if (selectableIndices.empty() || h <= 0 || w <= 0) return -1;
+
+    int selPos = 0;
+    for (int i = 0; i < static_cast<int>(selectableIndices.size()); ++i) {
+        if (selectableIndices[i] == startIdx) {
+            selPos = i;
+            break;
+        }
+    }
+
+    ConsoleViewport view = getConsoleViewport();
+    int watchW = view.w;
+    int watchH = view.h;
+    int visibleCount = std::max(1, h);
+    int topItemIdx = std::max(0, selectableIndices[selPos] - visibleCount + 1);
+    int maxTop = std::max(0, static_cast<int>(items.size()) - visibleCount);
+    if (topItemIdx > maxTop) topItemIdx = maxTop;
+
+    CONSOLE_CURSOR_INFO oldCursorInfo{};
+    GetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+    CONSOLE_CURSOR_INFO hiddenCursor = oldCursorInfo;
+    hiddenCursor.bVisible = FALSE;
+    SetConsoleCursorInfo(g_hOut, &hiddenCursor);
+
+    auto drawLine = [&](int row, int itemIdx, bool highlight) {
+        fillLine(x, y + row, w, L' ', ATTR_NORMAL);
+        std::wstring text = (highlight ? L"> " : L"  ") + items[itemIdx].text;
+        writeAtColor(x, y + row, padOrTrimText(text, w), highlight ? 0x70 : AMBER);
+    };
+
+    auto fullRender = [&]() {
+        for (int row = 0; row < visibleCount; ++row) {
+            int itemIdx = topItemIdx + row;
+            fillLine(x, y + row, w, L' ', ATTR_NORMAL);
+            if (itemIdx >= static_cast<int>(items.size())) continue;
+            drawLine(row, itemIdx, itemIdx == selectableIndices[selPos]);
+        }
+    };
+
+    auto ensureVisible = [&]() {
+        int selectedItemIdx = selectableIndices[selPos];
+        if (selectedItemIdx < topItemIdx) {
+            topItemIdx = selectedItemIdx;
+        } else if (selectedItemIdx >= topItemIdx + visibleCount) {
+            topItemIdx = selectedItemIdx - visibleCount + 1;
+        }
+        int localMaxTop = std::max(0, static_cast<int>(items.size()) - visibleCount);
+        if (topItemIdx < 0) topItemIdx = 0;
+        if (topItemIdx > localMaxTop) topItemIdx = localMaxTop;
+    };
+
+    fullRender();
+    while (true) {
+        if (!waitForConsoleInputOrResize(g_hIn, watchW, watchH)) {
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+            return MENU_RESIZE;
+        }
+
+        INPUT_RECORD ir{};
+        DWORD read = 0;
+        if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
+
+        WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+        WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
+        int oldSelPos = selPos;
+        int oldTop = topItemIdx;
+
+        if (vk == VK_UP) {
+            selPos = (selPos - 1 + static_cast<int>(selectableIndices.size())) % static_cast<int>(selectableIndices.size());
+            ensureVisible();
+        } else if (vk == VK_DOWN) {
+            selPos = (selPos + 1) % static_cast<int>(selectableIndices.size());
+            ensureVisible();
+        } else if (vk == VK_PRIOR) {
+            selPos -= std::max(1, visibleCount - 1);
+            if (selPos < 0) selPos = 0;
+            ensureVisible();
+        } else if (vk == VK_NEXT) {
+            selPos += std::max(1, visibleCount - 1);
+            if (selPos >= static_cast<int>(selectableIndices.size())) selPos = static_cast<int>(selectableIndices.size()) - 1;
+            ensureVisible();
+        } else if (vk == VK_HOME) {
+            selPos = 0;
+            ensureVisible();
+        } else if (vk == VK_END) {
+            selPos = static_cast<int>(selectableIndices.size()) - 1;
+            ensureVisible();
+        } else if (vk == VK_RETURN) {
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+            return selectableIndices[selPos];
+        } else if (vk == VK_ESCAPE) {
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+            return MENU_ESC;
+        } else if (ch >= L'0' && ch <= L'9') {
+            for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+                if (!items[i].selectable) continue;
+                std::wstring t = items[i].text;
+                size_t pos = t.find_first_not_of(L" ");
+                if (pos != std::wstring::npos && t[pos] == static_cast<wchar_t>(ch) &&
+                    pos + 1 < t.size() && (t[pos + 1] == L'.' || t[pos + 1] == L' ')) {
+                    for (int j = 0; j < static_cast<int>(selectableIndices.size()); ++j) {
+                        if (selectableIndices[j] == i) {
+                            selPos = j;
+                            ensureVisible();
+                            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+                            return selectableIndices[selPos];
+                        }
+                    }
+                }
+            }
+            continue;
+        } else {
+            continue;
+        }
+
+        if (oldTop != topItemIdx) {
+            fullRender();
+        } else if (oldSelPos != selPos) {
+            int oldRow = selectableIndices[oldSelPos] - topItemIdx;
+            int newRow = selectableIndices[selPos] - topItemIdx;
+            if (oldRow >= 0 && oldRow < visibleCount) drawLine(oldRow, selectableIndices[oldSelPos], false);
+            if (newRow >= 0 && newRow < visibleCount) drawLine(newRow, selectableIndices[selPos], true);
+        }
+    }
 }
 
 static InputResult readPasswordFieldAt(int x, int y, bool allowEscape) {
@@ -418,7 +595,11 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
     fillLine(boxX + 1, boxY + promptBoxH - 1, promptBoxW - 2, L'─', promptBoxAttr);
     for (int row = 1; row < promptBoxH - 1; ++row) {
         writeAtColor(boxX, boxY + row, L"│", promptBoxAttr);
-        writeAtColor(boxX + promptBoxW - 1, boxY + row, L"│", promptBoxAttr);
+        if (row == 3) {
+            writeAtColor(boxX + promptBoxW - 1, boxY + row, L" ", ATTR_NORMAL);
+        } else {
+            writeAtColor(boxX + promptBoxW - 1, boxY + row, L"│", promptBoxAttr);
+        }
     }
     writeAtColor(boxX + 2, boxY - 1, L"[ PASSWORD_ENTRY ]", AMBER_DIM);
     writeAtColor(boxX + 2, boxY + 1, promptLabel, AMBER);
@@ -1615,250 +1796,450 @@ static void writeOrEditToday(DiaryStore& store, const std::string& password) {
     }
 }
 
-// ─── 按日期编辑 ───
+static std::wstring formatDateW(int year, int month, int day) {
+    return utf8_to_wstring(std::to_string(year) + "/" + std::to_string(month) + "/" + std::to_string(day));
+}
 
-static void editByDate(DiaryStore& store, const std::string& password) {
-    auto sorted = store.getSortedIndices();
-    if (sorted.empty()) {
-        wprintln(L"日记本为空，没有可编辑的内容");
-        return;
-    }
+static std::vector<std::wstring> buildEntryPreviewLines(const nlohmann::json& entry) {
+    std::vector<std::wstring> lines;
+    int y = entry.value("year", 0);
+    int m = entry.value("month", 0);
+    int d = entry.value("day", 0);
 
-    // 收集年份
-    std::vector<int> years;
-    for (size_t i : sorted) {
-        int y = store.entries()[i].value("year", 0);
-        if (std::find(years.begin(), years.end(), y) == years.end()) years.push_back(y);
-    }
+    lines.push_back(L"DATE : " + formatDateW(y, m, d));
+    lines.push_back(L"");
 
-    // 子菜单结构 (标签用于 Esc 返回上一级)
-sel_year:
-    std::vector<MenuItem> yearItems;
-    yearItems.push_back({L"--- 选择年份 ---", false});
-    std::vector<int> yearVal;
-    for (int y : years) {
-        yearItems.push_back({utf8_to_wstring(std::to_string(y) + " 年"), true});
-        yearVal.push_back(y);
-    }
-    yearItems.push_back({L"0. 返回", true});
+    if (entry.contains("segments") && entry["segments"].is_array()) {
+        const auto& segs = entry["segments"];
+        for (size_t i = 0; i < segs.size(); ++i) {
+            const auto& seg = segs[i];
+            std::wstring timeLine = L"[" + std::to_wstring(i + 1) + L"] " + utf8_to_wstring(seg.value("time", "")) + L";";
+            lines.push_back(timeLine);
 
-    int yearChoice = menuSelect(yearItems, 1);
-    if (yearChoice == (int)yearItems.size() - 1 || yearChoice == MENU_ESC) return;
-    int selYear = yearVal[yearChoice - 1];
-    clearScreen();
-
-sel_month:
-    std::vector<int> months;
-    for (size_t i : sorted) {
-        auto& e = store.entries()[i];
-        if (e.value("year", 0) == selYear) {
-            int m = e.value("month", 0);
-            if (std::find(months.begin(), months.end(), m) == months.end()) months.push_back(m);
-        }
-    }
-    std::sort(months.begin(), months.end());
-
-    std::vector<MenuItem> monthItems;
-    monthItems.push_back({L"--- 选择月份 ---", false});
-    std::vector<int> monthVal;
-    for (int m : months) {
-        monthItems.push_back({utf8_to_wstring(std::to_string(m) + " 月"), true});
-        monthVal.push_back(m);
-    }
-    monthItems.push_back({L"0. 返回", true});
-
-    int monthChoice = menuSelect(monthItems, 1);
-    if (monthChoice == (int)monthItems.size() - 1) goto sel_year;
-    if (monthChoice == MENU_ESC) goto sel_year;
-    int selMonth = monthVal[monthChoice - 1];
-    clearScreen();
-
-sel_day:
-    std::vector<int> days;
-    std::vector<size_t> dayEntryIndices;
-    for (size_t i : sorted) {
-        auto& e = store.entries()[i];
-        if (e.value("year", 0) == selYear && e.value("month", 0) == selMonth) {
-            int d = e.value("day", 0);
-            days.push_back(d);
-            dayEntryIndices.push_back(i);
-        }
-    }
-
-    std::vector<MenuItem> dayItems;
-    dayItems.push_back({L"--- 选择日期 ---", false});
-    std::vector<int> dayVal;
-    for (int d : days) {
-        dayItems.push_back({utf8_to_wstring(std::to_string(d) + " 日"), true});
-        dayVal.push_back(d);
-    }
-    dayItems.push_back({L"0. 返回", true});
-
-    int dayChoice = menuSelect(dayItems, 1);
-    if (dayChoice == (int)dayItems.size() - 1) goto sel_month;
-    if (dayChoice == MENU_ESC) goto sel_month;
-    int selDay = dayVal[dayChoice - 1];
-    size_t entryIdx = dayEntryIndices[dayChoice - 1];
-    clearScreen();
-
-    // ── 显示日记并提供操作 ──
-    auto& entry = store.entries()[entryIdx];
-    int ey = entry.value("year", 0), em = entry.value("month", 0), ed = entry.value("day", 0);
-
-    while (true) {
-        clearScreen();
-        wprintln(L"══════════════ 查看/编辑日记 ══════════════");
-        wprintln(L"日期: " + utf8_to_wstring(std::to_string(ey) + "/" + std::to_string(em) + "/" + std::to_string(ed)));
-        wprintln(L"────────────────────────────────────────");
-
-        auto& segs = entry["segments"];
-        wprintln(L"共 " + std::to_wstring(segs.size()) + L" 条记录：");
-        for (size_t si = 0; si < segs.size(); ++si) {
-            const auto& seg = segs[si];
-            std::string timeStr = seg.value("time", "");
-            std::string content = seg.value("content", "");
-            wprintln(L"\n[" + std::to_wstring(si + 1) + L"] " + utf8_to_wstring(timeStr) + L";");
-            if (!content.empty()) {
-                wprintln(utf8_to_wstring(content));
-            } else {
-                wprintln(L"(空内容)");
+            std::vector<std::wstring> contentLines = splitDisplayLines(utf8_to_wstring(seg.value("content", "")), L"  ");
+            if (contentLines.empty()) contentLines.push_back(L"  (空内容)");
+            for (const auto& line : contentLines) {
+                lines.push_back(line.empty() ? L"  " : line);
             }
+            if (i + 1 < segs.size()) lines.push_back(L"");
         }
-        wprintln(L"────────────────────────────────────────");
+    }
+
+    return lines;
+}
+
+static std::vector<std::wstring> buildEntryHistoryLines(const nlohmann::json& entry, int skipSegIdx = -1) {
+    std::vector<std::wstring> historyLines;
+    if (!entry.contains("segments") || !entry["segments"].is_array()) return historyLines;
+
+    const auto& segs = entry["segments"];
+    for (size_t i = 0; i < segs.size(); ++i) {
+        if (static_cast<int>(i) == skipSegIdx) continue;
+
+        const auto& seg = segs[i];
+        historyLines.push_back(L"[" + utf8_to_wstring(seg.value("time", "")) + L"]");
+        std::vector<std::wstring> contentLines = splitDisplayLines(utf8_to_wstring(seg.value("content", "")), L"  ");
+        if (contentLines.empty()) contentLines.push_back(L"  ");
+        for (const auto& line : contentLines) historyLines.push_back(line);
+        historyLines.push_back(L"");
+    }
+
+    return historyLines;
+}
+
+static RegionMenuLayout renderDateSelectorPage(const std::wstring& listTitle,
+                                               const std::wstring& pathLine,
+                                               const std::vector<std::wstring>& infoLines) {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+    int boxW = csbi.dwSize.X;
+    int boxH = csbi.dwSize.Y;
+    if (boxW < 88) boxW = 88;
+
+    drawTerminalShell(L"DATE.SELECTOR // LOCAL_DIARY_ENV");
+
+    writeAtColor(4, 4, L"[ DATE_SELECTOR ]", AMBER_DIM);
+    fillLine(4, 5, boxW - 8, L'─', AMBER_DIM);
+    writeAtColor(4, 7, L"PATH : " + pathLine, AMBER);
+    writeAtColor(4, 8, L"MODE : YEAR -> MONTH -> DAY", AMBER);
+    writeAtColor(4, 9, L"NAV  : Enter进入  Esc返回  PgUp/PgDn翻页  Home/End首尾", AMBER_DIM);
+
+    int panelX = 4;
+    int panelW = boxW - 8;
+    int bodyY = 11;
+    int contentBottom = boxH - 5;
+    int bodyH = contentBottom - bodyY + 1;
+    if (bodyH < 8) bodyH = 8;
+
+    int leftBoxW = std::max(28, std::min(36, panelW / 3));
+    int rightBoxX = panelX + leftBoxW + 2;
+    int rightBoxW = panelW - leftBoxW - 2;
+
+    drawSingleBox(panelX, bodyY, leftBoxW, bodyH);
+    drawSingleBox(rightBoxX, bodyY, rightBoxW, bodyH);
+    writeAtColor(panelX + 2, bodyY - 1, L"[ " + listTitle + L" ]", AMBER_DIM);
+    writeAtColor(rightBoxX + 2, bodyY - 1, L"[ CONTEXT ]", AMBER_DIM);
+
+    writeWrappedPanelLines(rightBoxX + 2, bodyY + 1, rightBoxW - 4, bodyH - 2, infoLines, AMBER);
+
+    fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
+    fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
+    writeAtColor(3, boxH - 3, L"SELECT a time branch and enter its node.", AMBER_DIM);
+    writeAtColor(3, boxH - 2, padOrTrimText(L">> DATE INDEX READY", boxW - 6), AMBER);
+
+    return {panelX + 2, bodyY + 1, leftBoxW - 4, bodyH - 2};
+}
+
+static DateEntryPageLayout renderDateEntryPage(const nlohmann::json& entry) {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+    int boxW = csbi.dwSize.X;
+    int boxH = csbi.dwSize.Y;
+    if (boxW < 88) boxW = 88;
+
+    int y = entry.value("year", 0);
+    int m = entry.value("month", 0);
+    int d = entry.value("day", 0);
+    int segCount = (entry.contains("segments") && entry["segments"].is_array())
+        ? static_cast<int>(entry["segments"].size()) : 0;
+
+    drawTerminalShell(L"DATE.ENTRY // LOCAL_DIARY_ENV");
+
+    writeAtColor(4, 4, L"[ DATE_ENTRY ]", AMBER_DIM);
+    fillLine(4, 5, boxW - 8, L'─', AMBER_DIM);
+    writeAtColor(4, 7, L"DATE : " + formatDateW(y, m, d), AMBER);
+    writeAtColor(4, 8, L"SEGMENTS : " + std::to_wstring(segCount), AMBER);
+    writeAtColor(4, 9, L"MODE : PREVIEW + EDIT OPERATIONS", AMBER_DIM);
+
+    int panelX = 4;
+    int panelW = boxW - 8;
+    int previewBoxY = 11;
+    int actionBoxH = 8;
+    int contentBottom = boxH - 5;
+    int actionBoxY = contentBottom - actionBoxH + 1;
+    if (actionBoxY <= previewBoxY + 6) actionBoxY = previewBoxY + 7;
+    int previewBoxH = actionBoxY - previewBoxY - 1;
+    if (previewBoxH < 6) previewBoxH = 6;
+
+    drawSingleBox(panelX, previewBoxY, panelW, previewBoxH);
+    drawSingleBox(panelX, actionBoxY, panelW, actionBoxH);
+    writeAtColor(panelX + 2, previewBoxY - 1, L"[ ENTRY_LOG ]", AMBER_DIM);
+    writeAtColor(panelX + 2, actionBoxY - 1, L"[ SEGMENT_ACTIONS ]", AMBER_DIM);
+
+    fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
+    fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
+    writeAtColor(3, boxH - 3, L"TIP : preview follows window size; action list may scroll independently.", AMBER_DIM);
+    writeAtColor(3, boxH - 2, padOrTrimText(L">> ENTRY OPERATIONS READY", boxW - 6), AMBER);
+
+    DateEntryPageLayout layout;
+    layout.previewX = panelX + 2;
+    layout.previewY = previewBoxY + 1;
+    layout.previewW = panelW - 4;
+    layout.previewH = previewBoxH - 2;
+    layout.statusY = boxH - 2;
+    layout.menu = {panelX + 2, actionBoxY + 1, panelW - 4, actionBoxH - 2};
+    return layout;
+}
+
+static int pickEntrySegment(const nlohmann::json& entry, const std::wstring& title) {
+    while (true) {
+        CenteredRect shell = drawTerminalShell(L"SEGMENT.SELECT // LOCAL_DIARY_ENV", true);
+        int boxX = shell.x + 6;
+        int boxY = shell.y + 5;
+        int boxW = shell.w - 12;
+        int boxH = shell.h - 10;
+        if (boxH < 10) boxH = 10;
+
+        drawSingleBox(boxX, boxY, boxW, boxH);
+        writeAtColor(boxX + 2, boxY - 1, L"[ " + title + L" ]", AMBER_DIM);
+        writeAtColor(boxX + 2, boxY + 1, L"Enter选择  Esc返回  PgUp/PgDn翻页", AMBER_DIM);
+
+        std::vector<MenuItem> items;
+        items.push_back({L"--- 选择记录 ---", false});
+        const auto& segs = entry["segments"];
+        for (size_t i = 0; i < segs.size(); ++i) {
+            std::wstring label = L"记录 " + std::to_wstring(i + 1) + L"  [" + utf8_to_wstring(segs[i].value("time", "")) + L"]";
+            items.push_back({label, true});
+        }
+        items.push_back({L"0. 返回", true});
+
+        int choice = menuSelectScrollableInRegion(boxX + 2, boxY + 3, boxW - 4, boxH - 5, items, 1);
+        if (choice == MENU_RESIZE) continue;
+        if (choice == MENU_ESC || choice == static_cast<int>(items.size()) - 1) return -1;
+        return choice - 1;
+    }
+}
+
+static void editDateEntryPage(DiaryStore& store, const std::string& password, size_t entryIdx) {
+    while (entryIdx < store.entryCount()) {
+        auto& entry = store.entries()[entryIdx];
+        DateEntryPageLayout layout = renderDateEntryPage(entry);
+        writeWrappedPanelLines(layout.previewX, layout.previewY, layout.previewW, layout.previewH,
+                               buildEntryPreviewLines(entry), AMBER);
 
         std::vector<MenuItem> opItems;
         opItems.push_back({L"--- 操作 ---", false});
-        opItems.push_back({L"查看日记（只读）", true});
-        for (size_t si = 0; si < segs.size(); ++si) {
-            std::string timeStr = segs[si].value("time", "");
-            std::wstring label = L"编辑记录 " + std::to_wstring(si + 1) + L" (" + utf8_to_wstring(timeStr) + L")";
-            opItems.push_back({label, true});
+        if (entry.contains("segments") && entry["segments"].is_array()) {
+            const auto& segs = entry["segments"];
+            for (size_t si = 0; si < segs.size(); ++si) {
+                std::wstring label = L"编辑记录 " + std::to_wstring(si + 1) + L" (" + utf8_to_wstring(segs[si].value("time", "")) + L")";
+                opItems.push_back({label, true});
+            }
         }
+        size_t segCount = entry.contains("segments") && entry["segments"].is_array()
+            ? entry["segments"].size() : 0;
         opItems.push_back({L"添加新记录", true});
         opItems.push_back({L"删除某条记录", true});
         opItems.push_back({L"删除整篇日记", true});
-        opItems.push_back({L"0. 返回", true});
+        opItems.push_back({L"0. 返回日期索引", true});
 
-        int opChoice = menuSelect(opItems, 1);
+        int opChoice = menuSelectScrollableInRegion(
+            layout.menu.menuX, layout.menu.menuY,
+            layout.menu.menuW, layout.menu.menuH,
+            opItems, segCount > 0 ? 1 : static_cast<int>(segCount + 1));
 
-        // Esc → 返回日期选择
-        if (opChoice == MENU_ESC) goto sel_day;
+        if (opChoice == MENU_RESIZE) continue;
+        if (opChoice == MENU_ESC || opChoice == static_cast<int>(opItems.size()) - 1) return;
 
-        size_t segCount = segs.size();
-        // 查看日记
-        if (opChoice == 1) {
-            clearScreen();
-            printDiary(entry);
-            pauseScreen();
-        }
-        // 编辑某条记录
-        else if (opChoice >= 2 && opChoice <= (int)segCount + 1) {
-            int segIdx = opChoice - 2;
-            std::string oldContent = segs[segIdx].value("content", "");
-            std::wstring oldW = utf8_to_wstring(oldContent);
+        if (opChoice >= 1 && opChoice <= static_cast<int>(segCount)) {
+            int segIdx = opChoice - 1;
+            std::wstring oldW = utf8_to_wstring(entry["segments"][segIdx].value("content", ""));
 
-            clearScreen();
-            wprintln(L"══════ 编辑记录 " + std::to_wstring(segIdx + 1) + L" ══════");
-            wprintln(L"时间: " + utf8_to_wstring(segs[segIdx].value("time", "")) + L";");
-            wprintln(L"────────────────────────────────────");
-            wprintln(L"（修改后的内容）");
-            wprintln(L"══════════════════════════════════════");
+            EditorScreenConfig cfg;
+            cfg.panelTitle = L"EDIT DATE SEGMENT";
+            cfg.dateLine = L"DATE : " + formatDateW(entry.value("year", 0), entry.value("month", 0), entry.value("day", 0));
+            cfg.timeLine = L"SLOT : " + utf8_to_wstring(entry["segments"][segIdx].value("time", "")) + L";";
+            cfg.modeLine = L"MODE : UPDATE EXISTING SEGMENT";
+            cfg.historyLines = buildEntryHistoryLines(entry, segIdx);
+            cfg.adaptiveHistory = true;
+            cfg.emptyHistoryText = L"NO OTHER SEGMENTS FOR THIS DAY.";
+            cfg.minEditInnerH = 5;
 
-            CONSOLE_SCREEN_BUFFER_INFO csbi2;
-            GetConsoleScreenBufferInfo(g_hOut, &csbi2);
-
-            EditorResult er = openDiaryEditor(oldW);
-
+            EditorResult er = openDiaryEditor(oldW, cfg);
             if (er.confirmed) {
-                std::wstring trimmed = er.content;
-                while (!trimmed.empty() && (trimmed.back() == L'\n' || trimmed.back() == L'\r' || trimmed.back() == L' ')) {
-                    trimmed.pop_back();
-                }
-                segs[segIdx]["content"] = wstring_to_utf8(er.content);
+                entry["segments"][segIdx]["content"] = wstring_to_utf8(er.content);
                 store.save(DIARY_PATH, password);
                 showFullScreenMessage(L"SEGMENT UPDATED", {L"[记录已更新]"});
             } else {
                 showFullScreenMessage(L"EDIT CANCELLED", {L"[已取消]"});
             }
+            pauseScreen();
+            continue;
         }
-        // 添加新记录
-        else if (opChoice == (int)segCount + 2) {
+
+        if (opChoice == static_cast<int>(segCount) + 1) {
             std::string newTime = getCurrentTimeStr();
-            nlohmann::json newSeg;
-            newSeg["time"] = newTime;
-            newSeg["content"] = "";
-            segs.push_back(newSeg);
 
-            clearScreen();
-            wprintln(L"══════ 添加新记录 ══════");
-            wprintln(L"日期: " + utf8_to_wstring(std::to_string(ey) + "/" + std::to_string(em) + "/" + std::to_string(ed)));
-            wprintln(L"新增时间: " + utf8_to_wstring(newTime) + L";");
-            wprintln(L"────────────────────────────────────");
-            wprintln(L"══════════════════════════════════════");
+            EditorScreenConfig cfg;
+            cfg.panelTitle = L"ADD DATE SEGMENT";
+            cfg.dateLine = L"DATE : " + formatDateW(entry.value("year", 0), entry.value("month", 0), entry.value("day", 0));
+            cfg.timeLine = L"SLOT : " + utf8_to_wstring(newTime) + L";";
+            cfg.modeLine = L"MODE : APPEND NEW SEGMENT";
+            cfg.historyLines = buildEntryHistoryLines(entry);
+            cfg.adaptiveHistory = true;
+            cfg.emptyHistoryText = L"DAY LOG EMPTY. START WRITING.";
+            cfg.minEditInnerH = 5;
 
-            CONSOLE_SCREEN_BUFFER_INFO csbi3;
-            GetConsoleScreenBufferInfo(g_hOut, &csbi3);
-
-            EditorResult er = openDiaryEditor(L"");
-
+            EditorResult er = openDiaryEditor(L"", cfg);
             if (er.confirmed) {
                 std::wstring trimmed = er.content;
                 while (!trimmed.empty() && (trimmed.back() == L'\n' || trimmed.back() == L'\r' || trimmed.back() == L' ')) {
                     trimmed.pop_back();
                 }
+
                 if (!trimmed.empty()) {
-                    segs.back()["content"] = wstring_to_utf8(er.content);
+                    nlohmann::json newSeg;
+                    newSeg["time"] = newTime;
+                    newSeg["content"] = wstring_to_utf8(er.content);
+                    entry["segments"].push_back(newSeg);
                     store.save(DIARY_PATH, password);
                     showFullScreenMessage(L"SEGMENT ADDED", {L"[记录已添加]"});
                 } else {
-                    segs.erase(segs.size() - 1);
                     showFullScreenMessage(L"ADD CANCELLED", {L"[未输入内容，已取消]"});
                 }
             } else {
-                segs.erase(segs.size() - 1);
                 showFullScreenMessage(L"ADD CANCELLED", {L"[已取消]"});
             }
+            pauseScreen();
+            continue;
         }
-        // 删除某条记录
-        else if (opChoice == (int)segCount + 3) {
-            if (segs.empty()) { wprintln(L"没有可删除的记录"); pauseScreen(); continue; }
-            auto scRes = readLineCancelable("删除第几条记录? (1-" + std::to_string(segs.size()) + ", 0取消): ");
-            if (scRes.cancelled || scRes.value.empty()) continue;
-            size_t si;
-            try { si = std::stoull(scRes.value); } catch (...) { continue; }
-            if (si == 0 || si > segs.size()) continue;
-            auto cfmRes = readLineCancelable("确认删除记录 " + std::to_string(si) + "? (输入 yes 确认): ");
+
+        if (opChoice == static_cast<int>(segCount) + 2) {
+            if (segCount == 0) {
+                showFullScreenMessage(L"DELETE SKIPPED", {L"[没有可删除的记录]"});
+                pauseScreen();
+                continue;
+            }
+
+            int segIdx = pickEntrySegment(entry, L"DELETE SEGMENT");
+            if (segIdx < 0) continue;
+
+            auto cfmRes = readLineCancelable("确认删除记录 " + std::to_string(segIdx + 1) + "? (输入 yes 确认): ");
             if (cfmRes.cancelled) continue;
             if (cfmRes.value == "yes") {
-                segs.erase(si - 1);
-                if (segs.empty()) {
+                entry["segments"].erase(segIdx);
+                if (entry["segments"].empty()) {
                     store.removeEntry(entryIdx);
                     store.save(DIARY_PATH, password);
-                    wprintln(L"[日记已清空，整篇已删除]");
+                    showFullScreenMessage(L"ENTRY REMOVED", {L"[该日记已清空，整篇已删除]"});
                     pauseScreen();
                     return;
                 }
                 store.save(DIARY_PATH, password);
-                wprintln(L"[记录已删除]");
+                showFullScreenMessage(L"SEGMENT DELETED", {L"[记录已删除]"});
+                pauseScreen();
             }
+            continue;
         }
-        // 删除整篇日记
-        else if (opChoice == (int)segCount + 4) {
+
+        if (opChoice == static_cast<int>(segCount) + 3) {
             auto cfmRes = readLineCancelable("确认删除这篇日记? (输入 yes 确认): ");
             if (cfmRes.cancelled) continue;
             if (cfmRes.value == "yes") {
                 store.removeEntry(entryIdx);
                 store.save(DIARY_PATH, password);
-                wprintln(L"[日记已删除]");
+                showFullScreenMessage(L"ENTRY REMOVED", {L"[日记已删除]"});
                 pauseScreen();
                 return;
             }
         }
-        // 返回
-        else if (opChoice == (int)segCount + 5) {
-            goto sel_day;
+    }
+}
+
+// ─── 按日期编辑 ───
+
+static void editByDate(DiaryStore& store, const std::string& password) {
+    int stage = 0;
+    int selYear = 0;
+    int selMonth = 0;
+
+    while (true) {
+        auto sorted = store.getSortedIndices();
+        if (sorted.empty()) {
+            showFullScreenMessage(L"DATE INDEX EMPTY", {L"[当前没有可编辑的日记内容]"});
+            pauseScreen();
+            return;
         }
-        pauseScreen();
+
+        std::vector<MenuItem> items;
+        std::vector<int> values;
+        std::vector<size_t> entryIndices;
+        std::wstring listTitle;
+        std::wstring pathLine = L"ROOT";
+        std::vector<std::wstring> infoLines;
+
+        if (stage == 0) {
+            std::vector<int> years;
+            for (size_t idx : sorted) {
+                int y = store.entries()[idx].value("year", 0);
+                if (std::find(years.begin(), years.end(), y) == years.end()) years.push_back(y);
+            }
+            std::sort(years.begin(), years.end());
+
+            listTitle = L"YEAR INDEX";
+            items.push_back({L"--- 选择年份 ---", false});
+            for (int y : years) {
+                items.push_back({utf8_to_wstring(std::to_string(y) + " 年"), true});
+                values.push_back(y);
+            }
+            items.push_back({L"0. 返回主菜单", true});
+
+            infoLines = {
+                L"当前层级 : YEAR",
+                L"收录年份 : " + std::to_wstring(years.size()),
+                L"总日记数 : " + std::to_wstring(sorted.size()),
+                L"",
+                L"先定位年份，再继续进入月份与具体日期。",
+            };
+        } else if (stage == 1) {
+            pathLine = utf8_to_wstring(std::to_string(selYear));
+            std::vector<int> months;
+            for (size_t idx : sorted) {
+                const auto& e = store.entries()[idx];
+                if (e.value("year", 0) == selYear) {
+                    int m = e.value("month", 0);
+                    if (std::find(months.begin(), months.end(), m) == months.end()) months.push_back(m);
+                }
+            }
+            std::sort(months.begin(), months.end());
+            if (months.empty()) {
+                stage = 0;
+                continue;
+            }
+
+            listTitle = L"MONTH INDEX";
+            items.push_back({L"--- 选择月份 ---", false});
+            for (int m : months) {
+                items.push_back({utf8_to_wstring(std::to_string(m) + " 月"), true});
+                values.push_back(m);
+            }
+            items.push_back({L"0. 返回年份", true});
+
+            infoLines = {
+                L"当前层级 : MONTH",
+                L"年份节点 : " + utf8_to_wstring(std::to_string(selYear)),
+                L"月份数量 : " + std::to_wstring(months.size()),
+                L"",
+                L"这个层级用来定位某一年中的具体月份。",
+            };
+        } else {
+            pathLine = utf8_to_wstring(std::to_string(selYear) + " / " + std::to_string(selMonth));
+            std::vector<int> days;
+            for (size_t idx : sorted) {
+                const auto& e = store.entries()[idx];
+                if (e.value("year", 0) == selYear && e.value("month", 0) == selMonth) {
+                    days.push_back(e.value("day", 0));
+                    entryIndices.push_back(idx);
+                }
+            }
+            if (days.empty()) {
+                stage = 1;
+                continue;
+            }
+
+            listTitle = L"DAY INDEX";
+            items.push_back({L"--- 选择日期 ---", false});
+            for (size_t i = 0; i < days.size(); ++i) {
+                items.push_back({utf8_to_wstring(std::to_string(days[i]) + " 日"), true});
+                values.push_back(days[i]);
+            }
+            items.push_back({L"0. 返回月份", true});
+
+            infoLines = {
+                L"当前层级 : DAY",
+                L"月份节点 : " + utf8_to_wstring(std::to_string(selYear) + "/" + std::to_string(selMonth)),
+                L"可编辑日期 : " + std::to_wstring(days.size()),
+                L"",
+                L"进入某一天后，可直接查看预览并编辑各段记录。",
+            };
+        }
+
+        RegionMenuLayout menu = renderDateSelectorPage(listTitle, pathLine, infoLines);
+        int choice = menuSelectScrollableInRegion(menu.menuX, menu.menuY, menu.menuW, menu.menuH, items, 1);
+
+        if (choice == MENU_RESIZE) continue;
+        if (choice == MENU_ESC) {
+            if (stage == 0) return;
+            stage--;
+            continue;
+        }
+
+        if (choice == static_cast<int>(items.size()) - 1) {
+            if (stage == 0) return;
+            stage--;
+            continue;
+        }
+
+        if (stage == 0) {
+            selYear = values[choice - 1];
+            stage = 1;
+        } else if (stage == 1) {
+            selMonth = values[choice - 1];
+            stage = 2;
+        } else {
+            size_t entryIdx = entryIndices[choice - 1];
+            editDateEntryPage(store, password, entryIdx);
+        }
     }
 }
 
@@ -2272,28 +2653,63 @@ static void changePasswordInteractive(const std::string& currentPass) {
 
 static void counterPage(DiaryStore& store, const std::string& password) {
     while (true) {
-        clearScreen();
         int count = store.getCounter();
 
+        CenteredRect shell = drawTerminalShell(L"COUNTER.NODE // LOCAL_DIARY_ENV", true);
+        int leftX = shell.x + 6;
+        int topY = shell.y + 5;
+        int leftW = 48;
+        int rightX = leftX + leftW + 4;
+        int rightW = shell.x + shell.w - rightX - 6;
+        int heroH = 13;
+        int menuY = topY + heroH + 1;
+        int menuH = shell.y + shell.h - menuY - 4;
+        if (menuH < 6) menuH = 6;
+
+        drawSingleBox(leftX, topY, leftW, heroH);
+        drawSingleBox(rightX, topY, rightW, heroH);
+        drawSingleBox(leftX, menuY, shell.w - 12, menuH);
+
+        writeAtColor(leftX + 2, topY - 1, L"[ MYSTERY_COUNTER ]", AMBER_DIM);
+        writeAtColor(rightX + 2, topY - 1, L"[ COUNTER_STATE ]", AMBER_DIM);
+        writeAtColor(leftX + 2, menuY - 1, L"[ OPERATIONS ]", AMBER_DIM);
+
+        writeAtColor(leftX + 2, topY + 2, L"CURRENT VALUE", AMBER_DIM);
+        std::wstring countText = std::to_wstring(count);
+        int countX = leftX + std::max(2, (leftW - static_cast<int>(countText.size())) / 2);
+        writeAtColor(countX, topY + 6, countText, 0x0F);
+        writeAtColor(leftX + 2, topY + heroH - 3, L"Persistent local counter node.", AMBER_DIM);
+
+        std::vector<std::wstring> infoLines = {
+            L"STATE : persisted",
+            L"STORE : data\\diary.enc",
+            L"RANGE : >= 0",
+            L"SYNC  : updates saved immediately",
+            L"",
+            L"一个轻量的小模块，专门记录这个神秘数字。",
+        };
+        writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, heroH - 2, infoLines, AMBER);
+
+        fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
+        fillLine(shell.x + 1, shell.y + shell.h - 2, shell.w - 2, L' ', ATTR_NORMAL);
+        writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回  数值变更会立即保存", AMBER_DIM);
+        writeAtColor(shell.x + 2, shell.y + shell.h - 2, padOrTrimText(L">> COUNTER READY", shell.w - 6), AMBER);
+
         std::vector<MenuItem> items = {
-            {L"══════════════ 神秘计数器 ══════════════", false},
-            {L"", false},
-            {L"        当前计数: " + std::to_wstring(count), false},
-            {L"", false},
-            {L"────────────────────────────────────────", false},
             {L"1. 次数加一", true},
             {L"2. 手动设置次数", true},
             {L"0. 返回", true},
         };
 
-        int choice = menuSelect(items, 5);
+        int choice = menuSelectInRegion(leftX + 2, menuY + 1, shell.w - 16, menuH - 2, items, 0);
 
-        if (choice == 7 || choice == MENU_ESC) break;
+        if (choice == MENU_ESC || choice == 2) break;
+        if (choice == MENU_RESIZE) continue;
 
-        if (choice == 5) {
+        if (choice == 0) {
             store.setCounter(count + 1);
             store.save(DIARY_PATH, password);
-        } else if (choice == 6) {
+        } else if (choice == 1) {
             auto scRes = readLineCancelable("输入新次数 (非负整数, Esc 取消): ");
             if (scRes.cancelled || scRes.value.empty()) continue;
 
@@ -2314,7 +2730,7 @@ static void counterPage(DiaryStore& store, const std::string& password) {
 
             store.setCounter(newVal);
             store.save(DIARY_PATH, password);
-            wprintln(L"[计数器已更新]");
+            showFullScreenMessage(L"COUNTER UPDATED", {L"[计数器已更新]"});
             pauseScreen();
         }
     }
