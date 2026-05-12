@@ -232,10 +232,9 @@ bool waitForConsoleInputOrResize(HANDLE hIn, int& outScreenW, int& outScreenH, D
                 peeked = 0;
             } while (PeekConsoleInputW(hIn, &peek, 1, &peeked) && peeked > 0 && peek.EventType == WINDOW_BUFFER_SIZE_EVENT);
 
-            Sleep(settleMs);
-            ConsoleViewport settled = getConsoleViewport();
-            outScreenW = settled.w;
-            outScreenH = settled.h;
+            ConsoleViewport current = getConsoleViewport();
+            outScreenW = current.w;
+            outScreenH = current.h;
             return false;
         }
         return true;
@@ -245,10 +244,8 @@ bool waitForConsoleInputOrResize(HANDLE hIn, int& outScreenW, int& outScreenH, D
     int currentW = current.w;
     int currentH = current.h;
     if (currentW != outScreenW || currentH != outScreenH) {
-        Sleep(settleMs);
-        ConsoleViewport settled = getConsoleViewport();
-        outScreenW = settled.w;
-        outScreenH = settled.h;
+        outScreenW = currentW;
+        outScreenH = currentH;
         return false;
     }
 
