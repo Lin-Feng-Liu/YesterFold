@@ -59,6 +59,7 @@ static std::string readLine(const std::string& prompt, bool allowEmpty = false) 
 struct InputResult {
     bool cancelled;
     std::string value;
+    bool resized;
 };
 
 struct AccessPageLayout {
@@ -104,6 +105,12 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
                                          const std::vector<std::wstring>& statusLines,
                                          const std::wstring& modeLabel,
                                          WORD promptBoxAttr = AMBER);
+static InputResult readAccessPasswordPage(const std::wstring& headline,
+                                          const std::wstring& promptLabel,
+                                          const std::vector<std::wstring>& statusLines,
+                                          const std::wstring& modeLabel,
+                                          WORD promptBoxAttr,
+                                          bool allowEscape);
 static std::string readLoginPassword(int failedAttempts, int maxAttempts);
 
 static std::wstring fitTextToWidth(const std::wstring& text, int maxWidth) {
@@ -184,28 +191,40 @@ static std::wstring padOrTrimText(const std::wstring& text, int width) {
     return fitted;
 }
 
-static void drawTerminalShell(const std::wstring& envLabel) {
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+static CenteredRect drawTerminalShell(const std::wstring& envLabel, bool fixedCentered = false) {
+    ConsoleViewport view = getConsoleViewport();
+    int screenW = view.w;
+    int screenH = view.h;
+    int boxW = screenW;
+    int boxH = screenH;
+    int boxX = view.x;
+    int boxY = view.y;
 
-    int boxW = csbi.dwSize.X;
-    int boxH = csbi.dwSize.Y;
-    if (boxW < 88) boxW = 88;
+    if (fixedCentered) {
+        CenteredRect rect = getCenteredRect(screenW, screenH, FIXED_SHELL_W, FIXED_SHELL_H, 88, 24);
+        boxX = view.x + rect.x;
+        boxY = view.y + rect.y;
+        boxW = rect.w;
+        boxH = rect.h;
+    } else if (boxW < 88) {
+        boxW = 88;
+    }
 
     clearScreen();
-    fillRegion(0, 0, boxW, boxH, L' ', ATTR_NORMAL);
-    drawDoubleBox(0, 0, boxW, boxH);
-    writeAtColor(2, 1, L"[>_ SYS.TERMINAL // " + envLabel, AMBER);
-    writeAtColor(boxW - 15, 1, L"[■][O][X] ", AMBER_DIM);
-    writeAtColor(0, 2, L"╠", AMBER);
-    fillLine(1, 2, boxW - 2, L'═', AMBER);
-    writeAtColor(boxW - 1, 2, L"╣", AMBER);
+    fillRegion(view.x, view.y, screenW, screenH, L' ', ATTR_NORMAL);
+    drawDoubleBox(boxX, boxY, boxW, boxH);
+    writeAtColor(boxX + 2, boxY + 1, L"[>_ SYS.TERMINAL // " + envLabel, AMBER);
+    writeAtColor(boxX + boxW - 15, boxY + 1, L"[■][O][X] ", AMBER_DIM);
+    writeAtColor(boxX, boxY + 2, L"╠", AMBER);
+    fillLine(boxX + 1, boxY + 2, boxW - 2, L'═', AMBER);
+    writeAtColor(boxX + boxW - 1, boxY + 2, L"╣", AMBER);
+
+    return {boxX, boxY, boxW, boxH};
 }
 
 static InputResult readPasswordFieldAt(int x, int y, bool allowEscape) {
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    int fieldW = csbi.dwSize.X - x - 2;
+    ConsoleViewport view = getConsoleViewport();
+    int fieldW = (view.x + view.w) - x - 2;
     if (fieldW < 8) fieldW = 8;
 
     DWORD oldMode;
@@ -218,6 +237,10 @@ static InputResult readPasswordFieldAt(int x, int y, bool allowEscape) {
     while (true) {
         INPUT_RECORD ir; DWORD read;
         if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType == WINDOW_BUFFER_SIZE_EVENT) {
+            SetConsoleMode(g_hIn, oldMode);
+            return {false, "", true};
+        }
         if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
 
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
@@ -225,7 +248,7 @@ static InputResult readPasswordFieldAt(int x, int y, bool allowEscape) {
         if (vk == VK_RETURN) break;
         if (allowEscape && vk == VK_ESCAPE) {
             SetConsoleMode(g_hIn, oldMode);
-            return {true, ""};
+            return {true, "", false};
         }
         if (ch == 3) {
             SetConsoleMode(g_hIn, oldMode);
@@ -245,11 +268,11 @@ static InputResult readPasswordFieldAt(int x, int y, bool allowEscape) {
     }
 
     SetConsoleMode(g_hIn, oldMode);
-    return {false, wstring_to_utf8(wpass)};
+    return {false, wstring_to_utf8(wpass), false};
 }
 
 static std::string readPassword(const std::string& prompt) {
-    AccessPageLayout layout = renderAccessPage(
+    auto result = readAccessPasswordPage(
         L"VAULT LOCKED // CREDENTIAL REQUIRED",
         utf8_to_wstring(prompt),
         {
@@ -258,9 +281,9 @@ static std::string readPassword(const std::string& prompt) {
             L"NOTICE: local-only encrypted diary",
         },
         L"LOGIN",
-        AMBER
+        AMBER,
+        false
     );
-    auto result = readPasswordFieldAt(layout.fieldX, layout.fieldY, false);
     return result.value;
 }
 
@@ -281,15 +304,29 @@ static std::string readLoginPassword(int failedAttempts, int maxAttempts) {
         status.push_back(L"REMAIN: " + std::to_wstring(remain) + L" attempt(s)");
     }
 
-    AccessPageLayout layout = renderAccessPage(
+    auto result = readAccessPasswordPage(
         L"VAULT LOCKED // CREDENTIAL REQUIRED",
         L"输入密码:",
         status,
         L"LOGIN",
-        promptAttr
+        promptAttr,
+        false
     );
-    auto result = readPasswordFieldAt(layout.fieldX, layout.fieldY, false);
     return result.value;
+}
+
+static InputResult readAccessPasswordPage(const std::wstring& headline,
+                                          const std::wstring& promptLabel,
+                                          const std::vector<std::wstring>& statusLines,
+                                          const std::wstring& modeLabel,
+                                          WORD promptBoxAttr,
+                                          bool allowEscape) {
+    while (true) {
+        AccessPageLayout layout = renderAccessPage(headline, promptLabel, statusLines, modeLabel, promptBoxAttr);
+        InputResult result = readPasswordFieldAt(layout.fieldX, layout.fieldY, allowEscape);
+        if (result.resized) continue;
+        return result;
+    }
 }
 
 static AccessPageLayout renderAccessPage(const std::wstring& headline,
@@ -299,27 +336,25 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
                                          WORD promptBoxAttr) {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    int boxW = csbi.dwSize.X;
-    int boxH = csbi.dwSize.Y;
-    if (boxW < 88) boxW = 88;
+    CenteredRect shell = drawTerminalShell(L"AUTH.ACCESS // LOCAL_DIARY_ENV", true);
 
-    drawTerminalShell(L"AUTH.ACCESS // LOCAL_DIARY_ENV");
-    drawDiaryTitle(4, 4);
+    drawDiaryTitle(shell.x + 4, shell.y + 4);
 
-    int panelX = 58;
-    writeAtColor(panelX, 4, L"[ ACCESS_GATE ]", AMBER_DIM);
-    fillLine(panelX, 5, boxW - panelX - 2, L'─', AMBER_DIM);
-    writeAtColor(panelX, 7, headline, AMBER);
-    writeAtColor(panelX, 8, L"MODE  : " + modeLabel, AMBER);
+    int panelX = shell.x + 56;
+    int panelW = shell.w - 58;
+    writeAtColor(panelX, shell.y + 4, L"[ ACCESS_GATE ]", AMBER_DIM);
+    fillLine(panelX, shell.y + 5, panelW, L'─', AMBER_DIM);
+    writeAtColor(panelX, shell.y + 7, headline, AMBER);
+    writeAtColor(panelX, shell.y + 8, L"MODE  : " + modeLabel, AMBER);
     for (size_t i = 0; i < statusLines.size() && i < 5; ++i) {
-        writeAtColor(panelX, 10 + static_cast<int>(i), fitTextToWidth(statusLines[i], boxW - panelX - 3), AMBER);
+        writeAtColor(panelX, shell.y + 10 + static_cast<int>(i), fitTextToWidth(statusLines[i], panelW - 1), AMBER);
     }
 
-    int boxX = 6;
-    int boxY = 13;
-    int promptBoxW = boxW - 12;
+    int boxX = shell.x + 6;
+    int boxY = shell.y + 13;
+    int promptBoxW = shell.w - 12;
     int promptBoxH = 7;
-    if (boxY + promptBoxH >= boxH - 2) boxY = boxH - promptBoxH - 3;
+    if (boxY + promptBoxH >= shell.y + shell.h - 2) boxY = shell.y + shell.h - promptBoxH - 3;
     drawSingleBox(boxX, boxY, promptBoxW, promptBoxH);
     writeAtColor(boxX, boxY, L"┌", promptBoxAttr);
     writeAtColor(boxX + promptBoxW - 1, boxY, L"┐", promptBoxAttr);
@@ -336,7 +371,7 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
     writeAtColor(boxX + 2, boxY + 3, L">> ", AMBER);
     writeAtColor(boxX + 2, boxY + 5, L"Enter=提交  Backspace=删除  Esc=取消(若可用)", AMBER_DIM);
 
-    writeAtColor(3, boxH - 2, L">> AWAITING_CREDENTIAL...", AMBER);
+    writeAtColor(shell.x + 2, shell.y + shell.h - 2, L">> AWAITING_CREDENTIAL...", AMBER);
 
     AccessPageLayout layout;
     layout.fieldX = boxX + 5;
@@ -422,7 +457,7 @@ static EditorShellLayout renderEditorShell(const EditorScreenConfig& cfg) {
 }
 
 static InputResult readPasswordCancelable(const std::string& prompt) {
-    AccessPageLayout layout = renderAccessPage(
+    return readAccessPasswordPage(
         L"SECURE ACTION // IDENTITY CHECK",
         utf8_to_wstring(prompt),
         {
@@ -431,9 +466,9 @@ static InputResult readPasswordCancelable(const std::string& prompt) {
             L"RETURN to continue authentication",
         },
         L"VERIFY",
-        AMBER
+        AMBER,
+        true
     );
-    return readPasswordFieldAt(layout.fieldX, layout.fieldY, true);
 }
 
 static InputResult readLineCancelable(const std::string& prompt, bool allowEmpty = false) {
@@ -451,7 +486,7 @@ static InputResult readLineCancelable(const std::string& prompt, bool allowEmpty
             if (vk == VK_RETURN) break;
             if (vk == VK_ESCAPE) {
                 SetConsoleMode(g_hIn, oldMode); std::cout << std::endl;
-                return {true, ""};
+                return {true, "", false};
             }
             if (vk == VK_BACK) {
                 if (!line.empty()) { line.pop_back(); std::cout << "\b \b"; }
@@ -464,7 +499,7 @@ static InputResult readLineCancelable(const std::string& prompt, bool allowEmpty
         std::cout << std::endl;
         SetConsoleMode(g_hIn, oldMode);
         std::string result = wstring_to_utf8(line);
-        if (!result.empty() || allowEmpty) return {false, result};
+        if (!result.empty() || allowEmpty) return {false, result, false};
         std::cout << "输入不能为空" << std::endl;
     }
 }
@@ -645,8 +680,8 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
 
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(hOut, &csbi);
-    SHORT screenW = csbi.dwSize.X;
-    SHORT screenH = csbi.dwSize.Y;
+    int screenW = csbi.dwSize.X;
+    int screenH = csbi.dwSize.Y;
     if (screenW < 20) screenW = 80;
 
     // 回显模式: 读取输入并显示
@@ -657,19 +692,40 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
     std::wstring buf = initialContent;
     size_t cursor = buf.size();
 
-    EditorShellLayout shell = renderEditorShell(cfg);
     int historyScroll = 0;
+    EditorShellLayout shell = renderEditorShell(cfg);
     int editStartLine = shell.editY;
     int editStartCol = shell.editX;
     int editWidth = shell.editW;
     int maxEditLines = shell.editH;
     if (editWidth < 10) editWidth = screenW - 4;
-    if (maxEditLines < 3) maxEditLines = std::max<SHORT>(3, screenH - editStartLine - 3);
+    if (maxEditLines < 3) maxEditLines = std::max(3, screenH - editStartLine - 3);
 
     std::vector<RenderedLine> prevHistoryFrame(shell.historyH);
     std::vector<RenderedLine> prevEditorFrame(maxEditLines);
     bool historyFrameInit = false;
     bool editorFrameInit = false;
+
+    auto rebuildLayout = [&]() {
+        CONSOLE_SCREEN_BUFFER_INFO nowCsbi;
+        GetConsoleScreenBufferInfo(hOut, &nowCsbi);
+        screenW = nowCsbi.dwSize.X;
+        screenH = nowCsbi.dwSize.Y;
+        if (screenW < 20) screenW = 80;
+
+        shell = renderEditorShell(cfg);
+        editStartLine = shell.editY;
+        editStartCol = shell.editX;
+        editWidth = shell.editW;
+        maxEditLines = shell.editH;
+        if (editWidth < 10) editWidth = screenW - 4;
+        if (maxEditLines < 3) maxEditLines = std::max(3, screenH - editStartLine - 3);
+
+        prevHistoryFrame.assign(shell.historyH, RenderedLine{});
+        prevEditorFrame.assign(maxEditLines, RenderedLine{});
+        historyFrameInit = false;
+        editorFrameInit = false;
+    };
 
     auto paintRenderedFrame = [&](int x, int y, int width,
                                   const std::vector<RenderedLine>& nextFrame,
@@ -796,6 +852,7 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
         }
     };
 
+    rebuildLayout();
     redrawPanels();
     showConfirmBar(false);
     renderEditor();
@@ -810,6 +867,14 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
     bool vtReadingMod = false;  // 是否正在读取modifier部分
 
     while (true) {
+        if (!waitForConsoleInputOrResize(hIn, screenW, screenH)) {
+            rebuildLayout();
+            redrawPanels();
+            showConfirmBar(inConfirm);
+            renderEditor();
+            continue;
+        }
+
         INPUT_RECORD ir;
         DWORD read;
         if (!ReadConsoleInputW(hIn, &ir, 1, &read) || read == 0) continue;
@@ -1996,6 +2061,10 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
             layout.menuX, layout.menuY,
             layout.menuW, layout.menuH,
             menuItems, 0);
+
+        if (choice == MENU_RESIZE) {
+            continue;
+        }
 
         if (choice == MENU_ESC) {
             continue;

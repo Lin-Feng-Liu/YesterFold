@@ -188,6 +188,73 @@ void drawHeatmapCell(int x, int y, int level) {
     }
 }
 
+ConsoleViewport getConsoleViewport() {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+
+    ConsoleViewport view{};
+    view.x = csbi.srWindow.Left;
+    view.y = csbi.srWindow.Top;
+    view.w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    view.h = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    if (view.w <= 0) view.w = csbi.dwSize.X;
+    if (view.h <= 0) view.h = csbi.dwSize.Y;
+    return view;
+}
+
+CenteredRect getCenteredRect(int screenW, int screenH, int desiredW, int desiredH, int minW, int minH) {
+    CenteredRect rect{};
+    rect.w = desiredW;
+    rect.h = desiredH;
+
+    if (rect.w > screenW) rect.w = screenW;
+    if (rect.h > screenH) rect.h = screenH;
+    if (rect.w < minW) rect.w = (screenW < minW) ? screenW : minW;
+    if (rect.h < minH) rect.h = (screenH < minH) ? screenH : minH;
+
+    rect.x = (screenW - rect.w) / 2;
+    rect.y = (screenH - rect.h) / 2;
+    if (rect.x < 0) rect.x = 0;
+    if (rect.y < 0) rect.y = 0;
+    return rect;
+}
+
+bool waitForConsoleInputOrResize(HANDLE hIn, int& outScreenW, int& outScreenH, DWORD timeoutMs, DWORD settleMs) {
+    DWORD waitResult = WaitForSingleObject(hIn, timeoutMs);
+    if (waitResult == WAIT_OBJECT_0) {
+        INPUT_RECORD peek{};
+        DWORD peeked = 0;
+        if (PeekConsoleInputW(hIn, &peek, 1, &peeked) && peeked > 0 && peek.EventType == WINDOW_BUFFER_SIZE_EVENT) {
+            INPUT_RECORD consumed{};
+            DWORD read = 0;
+            do {
+                if (!ReadConsoleInputW(hIn, &consumed, 1, &read) || read == 0) break;
+                peeked = 0;
+            } while (PeekConsoleInputW(hIn, &peek, 1, &peeked) && peeked > 0 && peek.EventType == WINDOW_BUFFER_SIZE_EVENT);
+
+            Sleep(settleMs);
+            ConsoleViewport settled = getConsoleViewport();
+            outScreenW = settled.w;
+            outScreenH = settled.h;
+            return false;
+        }
+        return true;
+    }
+
+    ConsoleViewport current = getConsoleViewport();
+    int currentW = current.w;
+    int currentH = current.h;
+    if (currentW != outScreenW || currentH != outScreenH) {
+        Sleep(settleMs);
+        ConsoleViewport settled = getConsoleViewport();
+        outScreenW = settled.w;
+        outScreenH = settled.h;
+        return false;
+    }
+
+    return true;
+}
+
 // ─── 全屏方向键菜单 ───
 
 int menuSelect(const std::vector<MenuItem>& items, int startIdx) {
@@ -205,6 +272,8 @@ int menuSelect(const std::vector<MenuItem>& items, int startIdx) {
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
     DWORD bufSize = csbi.dwSize.X * csbi.dwSize.Y;
     SHORT screenW = csbi.dwSize.X;
+    int watchW = csbi.dwSize.X;
+    int watchH = csbi.dwSize.Y;
 
     int prevSelIdx = -1;
 
@@ -240,6 +309,9 @@ int menuSelect(const std::vector<MenuItem>& items, int startIdx) {
 
     fullRenderW();
     while (true) {
+        if (!waitForConsoleInputOrResize(g_hIn, watchW, watchH)) {
+            return MENU_RESIZE;
+        }
         int ch = _getch();
         if (ch == 0xE0 || ch == 0) {
             int key = _getch();
@@ -293,6 +365,10 @@ int menuSelectInRegion(int x, int y, int w, int h,
     int prevSelIdx = -1;
     int visibleCount = (int)items.size();
     if (visibleCount > h) visibleCount = h;
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+    int watchW = csbi.dwSize.X;
+    int watchH = csbi.dwSize.Y;
 
     CONSOLE_CURSOR_INFO oldCursorInfo{};
     GetConsoleCursorInfo(g_hOut, &oldCursorInfo);
@@ -322,6 +398,11 @@ int menuSelectInRegion(int x, int y, int w, int h,
 
     // 输入循环
     while (true) {
+        if (!waitForConsoleInputOrResize(g_hIn, watchW, watchH)) {
+            SetConsoleTextAttribute(g_hOut, ATTR_NORMAL);
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+            return MENU_RESIZE;
+        }
         int ch = _getch();
         if (ch == 0xE0 || ch == 0) {
             int key = _getch();

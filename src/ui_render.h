@@ -17,6 +17,24 @@ constexpr WORD ATTR_NORMAL = 0x07;   // 默认灰白
 
 // ─── 菜单返回码 ───
 constexpr int MENU_ESC = -2;
+constexpr int MENU_RESIZE = -3;
+
+constexpr int FIXED_SHELL_W = 118;
+constexpr int FIXED_SHELL_H = 31;
+
+struct CenteredRect {
+    int x;
+    int y;
+    int w;
+    int h;
+};
+
+struct ConsoleViewport {
+    int x;
+    int y;
+    int w;
+    int h;
+};
 
 struct MenuItem {
     std::wstring text;
@@ -49,6 +67,9 @@ void drawSingleBox(int x, int y, int w, int h);
 void drawProgressBar(int x, int y, int barWidth, double percent);
 void drawDiaryTitle(int x, int y);
 void drawHeatmapCell(int x, int y, int level);
+ConsoleViewport getConsoleViewport();
+CenteredRect getCenteredRect(int screenW, int screenH, int desiredW, int desiredH, int minW = 88, int minH = 12);
+bool waitForConsoleInputOrResize(HANDLE hIn, int& outScreenW, int& outScreenH, DWORD timeoutMs = 80, DWORD settleMs = 160);
 
 // ─── 区域方向键菜单 ───
 int menuSelect(const std::vector<MenuItem>& items, int startIdx = 0);

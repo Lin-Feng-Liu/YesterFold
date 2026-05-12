@@ -33,53 +33,44 @@ static const wchar_t* monthNames[] = {
 };
 
 MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    int screenW = csbi.dwSize.X;
-    int screenH = csbi.dwSize.Y;
+    ConsoleViewport view = getConsoleViewport();
+    int screenW = view.w;
+    int screenH = view.h;
 
-    int minW = 88;
-    int boxW = (screenW < minW) ? minW : screenW;
-    int boxH = screenH;
+    CenteredRect shell = getCenteredRect(screenW, screenH, FIXED_SHELL_W, FIXED_SHELL_H, 88, 24);
+    shell.x += view.x;
+    shell.y += view.y;
+    int boxX = shell.x;
+    int boxY = shell.y;
+    int boxW = shell.w;
+    int boxH = shell.h;
 
-    int canvasMaxW = 132;
-    int canvasW = boxW - 6;
-    if (canvasW > canvasMaxW) canvasW = canvasMaxW;
-    if (canvasW < 92) canvasW = 92;
-    int canvasX = (boxW - canvasW) / 2;
-
-    int leftAreaX = canvasX + 1;
-    int leftAreaW = 44;
-    int rightAreaX = canvasX + 49;
-    int rightAreaW = canvasW - 49;
-    if (rightAreaW < 34) {
-        rightAreaW = 34;
-        leftAreaW = rightAreaX - leftAreaX - 4;
-    }
+    int innerX = boxX + 2;
+    int leftAreaX = innerX + 1;
+    int rightAreaX = innerX + 45;
+    int rightAreaW = boxW - (rightAreaX - boxX) - 4;
 
     clearScreen();
-    fillRegion(0, 0, boxW, boxH, L' ', ATTR_NORMAL);
-
-    drawMainFrame(0, 0, boxW, boxH);
-    fillRegion(1, 3, boxW - 2, boxH - 4, L' ', ATTR_NORMAL);
+    fillRegion(0, 0, screenW, screenH, L' ', ATTR_NORMAL);
+    drawMainFrame(boxX, boxY, boxW, boxH);
+    fillRegion(boxX + 1, boxY + 3, boxW - 2, boxH - 4, L' ', ATTR_NORMAL);
 
     // Title bar
     {
         std::wstring left = L" [>_ SYS.TERMINAL // LOCAL_DIARY_ENV";
         std::wstring btns = L"[\u25A0][O][X] ";
-        writeAtColor(canvasX, 1, left, AMBER);
-        int btnX = boxW - 2 - static_cast<int>(btns.size());
-        writeAtColor(btnX, 1, btns, AMBER_DIM);
+        writeAtColor(innerX, boxY + 1, left, AMBER);
+        int btnX = boxX + boxW - 2 - static_cast<int>(btns.size());
+        writeAtColor(btnX, boxY + 1, btns, AMBER_DIM);
     }
 
-    drawDiaryTitle(leftAreaX, 4);
+    drawDiaryTitle(leftAreaX, boxY + 4);
 
     // Vault panel
     {
-        int vaultY = 4;
-        int panelX = rightAreaX;
-        writeAtColor(panelX, vaultY, L"[ VAULT_INTEGRITY ]", AMBER_DIM);
-        if (rightAreaW > 0) fillLine(panelX, vaultY + 1, rightAreaW, L'\u2500', AMBER_DIM);
+        int vaultY = boxY + 4;
+        writeAtColor(rightAreaX, vaultY, L"[ VAULT_INTEGRITY ]", AMBER_DIM);
+        if (rightAreaW > 0) fillLine(rightAreaX, vaultY + 1, rightAreaW, L'\u2500', AMBER_DIM);
 
         WIN32_FILE_ATTRIBUTE_DATA fad;
         bool fileOk = GetFileAttributesExA(dataPath, GetFileExInfoStandard, &fad);
@@ -106,15 +97,15 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
                 std::wstringstream t; t << (minAgo / 60) << L" h " << (minAgo % 60) << L" m ago"; syncStr = t.str();
             }
 
-            writeAtColor(panelX, vaultY + 2, L"PATH  : " + utf8_to_wstring(std::string(dataPath)), AMBER);
-            writeAtColor(panelX, vaultY + 3, L"SIZE  : " + fss.str() + L" (Encrypted)", AMBER);
-            writeAtColor(panelX, vaultY + 4, L"STATE : XChaCha20-Poly1305 [LOCKED]", AMBER);
-            writeAtColor(panelX, vaultY + 5, L"SYNC  : Last save " + syncStr, AMBER);
+            writeAtColor(rightAreaX, vaultY + 2, L"PATH  : " + utf8_to_wstring(std::string(dataPath)), AMBER);
+            writeAtColor(rightAreaX, vaultY + 3, L"SIZE  : " + fss.str() + L" (Encrypted)", AMBER);
+            writeAtColor(rightAreaX, vaultY + 4, L"STATE : XChaCha20-Poly1305 [LOCKED]", AMBER);
+            writeAtColor(rightAreaX, vaultY + 5, L"SYNC  : Last save " + syncStr, AMBER);
         }
     }
 
-    int menuBoxX = leftAreaX + 6;
-    int menuBoxY = 11;
+    int menuBoxX = leftAreaX + 5;
+    int menuBoxY = boxY + 11;
     int menuBoxW = 28;
     int menuBoxH = 12;
     drawSingleBox(menuBoxX, menuBoxY, menuBoxW, menuBoxH);
@@ -136,17 +127,17 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
             ss << L"WEEK " << (wk + 1) << L": ";
             writeAtColor(rowX, weekY, ss.str(), AMBER);
             rowX += static_cast<int>(ss.str().size());
-
             writeAtColor(rowX, weekY, L"[", AMBER);
             rowX++;
+
             for (int d = 0; d < 7; ++d) {
                 int dayIdx = wk * 7 + d;
                 if (dayIdx >= dim) break;
                 drawHeatmapCell(rowX, weekY, m.monthHeatmap[dayIdx]);
                 rowX += 2;
             }
-            writeAtColor(rowX, weekY, L"]", AMBER);
 
+            writeAtColor(rowX, weekY, L"]", AMBER);
             if (wk + 1 == todayWeek) {
                 writeAtColor(rowX + 2, weekY, L"<-- TODAY", AMBER_DIM);
             }
@@ -165,7 +156,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
     // Temporal metrics
     {
         int metricsY = menuBoxY + 5 + m.monthWeeks;
-        if (metricsY + 4 <= boxH - 3) {
+        if (metricsY + 4 <= boxY + boxH - 3) {
             int metricsX = rightAreaX;
             writeAtColor(metricsX, metricsY, L"[ TEMPORAL_METRICS ]", AMBER_DIM);
             metricsY++;
@@ -221,23 +212,21 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
 
     // Footer
     {
-        int logY = boxH - 4;
-        if (logY >= 4) {
-            ULONGLONG elapsed = GetTickCount() - g_startTick;
-            double secs = elapsed / 1000.0;
+        int logY = boxY + boxH - 4;
+        ULONGLONG elapsed = GetTickCount() - g_startTick;
+        double secs = elapsed / 1000.0;
 
-            wchar_t line1[80];
-            swprintf(line1, 80, L"  UPTIME %.1fs", secs);
-            writeAtColor(canvasX, logY, line1, AMBER_DIM);
-            writeAtColor(canvasX, logY + 1, L"  STATUS IDLE", AMBER_DIM);
-        }
+        wchar_t line1[80];
+        swprintf(line1, 80, L"  UPTIME %.1fs", secs);
+        writeAtColor(innerX, logY, line1, AMBER_DIM);
+        writeAtColor(innerX, logY + 1, L"  STATUS IDLE", AMBER_DIM);
     }
 
-    int cmdY = boxH - 2;
+    int cmdY = boxY + boxH - 2;
     {
         std::wstring prompt = L">> AWAITING_COMMAND...";
-        writeAtColor(canvasX, cmdY, prompt, AMBER);
-        COORD cursorPos = {static_cast<SHORT>(canvasX + static_cast<int>(prompt.size())), static_cast<SHORT>(cmdY)};
+        writeAtColor(innerX, cmdY, prompt, AMBER);
+        COORD cursorPos = {static_cast<SHORT>(innerX + static_cast<int>(prompt.size())), static_cast<SHORT>(cmdY)};
         SetConsoleCursorPosition(g_hOut, cursorPos);
     }
 
