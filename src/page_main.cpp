@@ -47,7 +47,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& m, const char* dataPath) {
 
     int innerX = boxX + 2;
     int leftAreaX = innerX + 1;
-    int rightAreaX = innerX + 45;
+    int rightAreaX = innerX + 48;
     int rightAreaW = boxW - (rightAreaX - boxX) - 4;
 
     clearScreen();

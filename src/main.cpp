@@ -153,6 +153,8 @@ struct DateSelectorLayout {
 };
 
 struct DateEntryPageLayout {
+    int boxW;
+    int boxH;
     int dateX;
     int dateW;
     int countX;
@@ -1974,8 +1976,7 @@ static DateSelectorLayout renderDateSelectorPageFrame() {
 
     fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
     fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
-    writeAtColor(3, boxH - 3, L"选择一个时间节点并进入。", AMBER_DIM);
-    writeAtColor(3, boxH - 2, padOrTrimText(L">> 日期索引已就绪", boxW - 6), AMBER);
+    writeAtColor(3, boxH - 2, padOrTrimText(L">> DATE INDEX READY", boxW - 6), AMBER);
 
     DateSelectorLayout layout;
     layout.pathX = 4;
@@ -2003,7 +2004,6 @@ static void updateDateSelectorPage(const DateSelectorLayout& layout,
     fillLine(layout.navX, 9, layout.navW, L' ', ATTR_NORMAL);
     writeAtColor(layout.pathX, 7, fitTextToWidth(L"PATH : " + pathLine, layout.pathW), AMBER);
     writeAtColor(layout.modeX, 8, fitTextToWidth(L"MODE : YEAR -> MONTH -> DAY", layout.modeW), AMBER);
-    writeAtColor(layout.navX, 9, fitTextToWidth(L"NAV  : Enter进入  Esc返回  PgUp/PgDn翻页  Home/End首尾", layout.navW), AMBER_DIM);
 
     fillLine(layout.titleX, layout.menu.menuY - 2, layout.titleW, L' ', ATTR_NORMAL);
     writeAtColor(layout.titleX, layout.menu.menuY - 2, fitTextToWidth(L"[ " + listTitle + L" ]", layout.titleW), AMBER_DIM);
@@ -2013,6 +2013,11 @@ static void updateDateSelectorPage(const DateSelectorLayout& layout,
     }
 
     writeWrappedPanelLines(layout.infoX, layout.infoY, layout.infoW, layout.infoH, infoLines, AMBER);
+
+    fillLine(1, layout.menu.menuY + layout.menu.menuH + 1, layout.navW, L' ', ATTR_NORMAL);
+    writeAtColor(3, layout.menu.menuY + layout.menu.menuH + 1,
+                 fitTextToWidth(L"Enter进入  Esc返回  PgUp/PgDn翻页  Home/End首尾", layout.navW - 2),
+                 AMBER_DIM);
 }
 
 static DateEntryPageLayout renderDateEntryPage(const nlohmann::json& entry) {
@@ -2047,9 +2052,11 @@ static DateEntryPageLayout renderDateEntryPage(const nlohmann::json& entry) {
 
     fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
     fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
-    writeAtColor(3, boxH - 2, padOrTrimText(L">> 当日日记操作已就绪", boxW - 6), AMBER);
+    writeAtColor(3, boxH - 2, padOrTrimText(L">> ENTRY OPERATIONS READY", boxW - 6), AMBER);
 
     DateEntryPageLayout layout;
+    layout.boxW = boxW;
+    layout.boxH = boxH;
     layout.dateX = 4;
     layout.dateW = boxW - 8;
     layout.countX = 4;
@@ -2092,6 +2099,11 @@ static void updateDateEntryPageHeader(const DateEntryPageLayout& layout, const n
 
     fillLine(layout.hintX, layout.statusY - 1, layout.hintW, L' ', ATTR_NORMAL);
     writeAtColor(layout.hintX, layout.statusY - 1, fitTextToWidth(L"Enter执行  Esc返回  PgUp/PgDn翻页", layout.hintW), AMBER_DIM);
+}
+
+static bool dateEntryViewportChanged(const DateEntryPageLayout& layout) {
+    ConsoleViewport view = getConsoleViewport();
+    return view.w != layout.boxW || view.h != layout.boxH;
 }
 
 static int pickEntrySegment(const nlohmann::json& entry, const std::wstring& title) {
@@ -2182,6 +2194,7 @@ static void editDateEntryPage(DiaryStore& store, const std::string& password, si
                 showFullScreenMessage(L"EDIT CANCELLED", {L"[已取消]"});
             }
             pauseScreen();
+            if (dateEntryViewportChanged(layout)) layout = renderDateEntryPage(entry);
             continue;
         }
 
@@ -2219,6 +2232,7 @@ static void editDateEntryPage(DiaryStore& store, const std::string& password, si
                 showFullScreenMessage(L"ADD CANCELLED", {L"[已取消]"});
             }
             pauseScreen();
+            if (dateEntryViewportChanged(layout)) layout = renderDateEntryPage(entry);
             continue;
         }
 
@@ -2246,6 +2260,7 @@ static void editDateEntryPage(DiaryStore& store, const std::string& password, si
                 store.save(DIARY_PATH, password);
                 showFullScreenMessage(L"SEGMENT DELETED", {L"[记录已删除]"});
                 pauseScreen();
+                if (dateEntryViewportChanged(layout)) layout = renderDateEntryPage(entry);
             }
             continue;
         }
@@ -2781,7 +2796,7 @@ static void exportImportMenu(DiaryStore& store, const std::string& password) {
         setFooterHintRegion(shell.x + 1, shell.y + shell.h - 2, shell.w - 2);
         fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
         writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回", AMBER_DIM);
-        writeFooterHint(L">> 导出导入模块已就绪", AMBER);
+        writeFooterHint(L">> TRANSFER READY", AMBER);
 
         std::vector<MenuItem> items = {
             {L"1. 导出日记", true},
@@ -2898,7 +2913,7 @@ static void counterPage(DiaryStore& store, const std::string& password) {
         fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
         fillLine(shell.x + 1, shell.y + shell.h - 2, shell.w - 2, L' ', ATTR_NORMAL);
         writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回", AMBER_DIM);
-        writeAtColor(shell.x + 2, shell.y + shell.h - 2, padOrTrimText(L">> 神秘计数器已就绪", shell.w - 6), AMBER);
+        writeAtColor(shell.x + 2, shell.y + shell.h - 2, padOrTrimText(L">> COUNTER READY", shell.w - 6), AMBER);
 
         std::vector<MenuItem> items = {
             {L"1. 次数加一", true},
