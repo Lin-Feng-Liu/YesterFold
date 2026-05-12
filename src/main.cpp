@@ -153,10 +153,22 @@ struct DateSelectorLayout {
 };
 
 struct DateEntryPageLayout {
+    int dateX;
+    int dateW;
+    int countX;
+    int countW;
+    int modeX;
+    int modeW;
     int previewX;
     int previewY;
     int previewW;
     int previewH;
+    int previewLabelX;
+    int previewLabelW;
+    int actionLabelX;
+    int actionLabelW;
+    int hintX;
+    int hintW;
     int statusY;
     RegionMenuLayout menu;
 };
@@ -1595,6 +1607,7 @@ static void viewAllDiaries(const DiaryStore& store) {
         int bodyH;
         int infoY;
         int promptY;
+        int statusY;
     };
 
     DWORD oldInMode = 0;
@@ -1666,8 +1679,8 @@ static void viewAllDiaries(const DiaryStore& store) {
 
         int panelX = 4;
         int panelW = boxW - 8;
-        int bodyBoxY = 10;
-        int contentBottom = boxH - 5;
+        int bodyBoxY = 11;
+        int contentBottom = boxH - 6;
         int bodyBoxH = contentBottom - bodyBoxY + 1;
         if (bodyBoxH < 6) bodyBoxH = 6;
 
@@ -1678,8 +1691,9 @@ static void viewAllDiaries(const DiaryStore& store) {
         layout.bodyY = bodyBoxY + 1;
         layout.bodyW = panelW - 4;
         layout.bodyH = bodyBoxH - 2;
-        layout.infoY = boxH - 3;
-        layout.promptY = boxH - 2;
+        layout.infoY = boxH - 4;
+        layout.promptY = boxH - 3;
+        layout.statusY = boxH - 2;
 
         prevBodyFrame.assign(layout.bodyH, RenderedLine{});
         bodyFrameInit = false;
@@ -1720,8 +1734,10 @@ static void viewAllDiaries(const DiaryStore& store) {
         std::wstring controls = L"PgUp/PgDn翻页  Up/Down滚动  Home/End首尾  Esc返回";
         fillLine(1, layout.infoY, screenW - 2, L' ', ATTR_NORMAL);
         fillLine(1, layout.promptY, screenW - 2, L' ', ATTR_NORMAL);
+        fillLine(1, layout.statusY, screenW - 2, L' ', ATTR_NORMAL);
         writeAtColor(3, layout.infoY, fitTextToWidth(info, screenW - 6), AMBER_DIM);
-        writeAtColor(3, layout.promptY, padOrTrimText(controls, screenW - 6), AMBER);
+        writeAtColor(3, layout.promptY, fitTextToWidth(controls, screenW - 6), AMBER_DIM);
+        writeAtColor(3, layout.statusY, L">> ARCHIVE READY", AMBER);
     };
 
     renderShell();
@@ -2016,10 +2032,6 @@ static DateEntryPageLayout renderDateEntryPage(const nlohmann::json& entry) {
 
     writeAtColor(4, 4, L"[ DATE_ENTRY ]", AMBER_DIM);
     fillLine(4, 5, boxW - 8, L'─', AMBER_DIM);
-    writeAtColor(4, 7, L"DATE : " + formatDateW(y, m, d), AMBER);
-    writeAtColor(4, 8, L"SEGMENTS : " + std::to_wstring(segCount), AMBER);
-    writeAtColor(4, 9, L"MODE : PREVIEW + EDIT OPERATIONS", AMBER_DIM);
-
     int panelX = 4;
     int panelW = boxW - 8;
     int previewBoxY = 11;
@@ -2032,22 +2044,54 @@ static DateEntryPageLayout renderDateEntryPage(const nlohmann::json& entry) {
 
     drawSingleBox(panelX, previewBoxY, panelW, previewBoxH);
     drawSingleBox(panelX, actionBoxY, panelW, actionBoxH);
-    writeAtColor(panelX + 2, previewBoxY - 1, L"[ ENTRY_LOG ]", AMBER_DIM);
-    writeAtColor(panelX + 2, actionBoxY - 1, L"[ SEGMENT_ACTIONS ]", AMBER_DIM);
 
     fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
     fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
-    writeAtColor(3, boxH - 3, L"预览区会跟随窗口变化，操作列表可单独滚动。", AMBER_DIM);
     writeAtColor(3, boxH - 2, padOrTrimText(L">> 当日日记操作已就绪", boxW - 6), AMBER);
 
     DateEntryPageLayout layout;
+    layout.dateX = 4;
+    layout.dateW = boxW - 8;
+    layout.countX = 4;
+    layout.countW = boxW - 8;
+    layout.modeX = 4;
+    layout.modeW = boxW - 8;
     layout.previewX = panelX + 2;
     layout.previewY = previewBoxY + 1;
     layout.previewW = panelW - 4;
     layout.previewH = previewBoxH - 2;
+    layout.previewLabelX = panelX + 2;
+    layout.previewLabelW = panelW - 4;
+    layout.actionLabelX = panelX + 2;
+    layout.actionLabelW = panelW - 4;
+    layout.hintX = 3;
+    layout.hintW = boxW - 6;
     layout.statusY = boxH - 2;
     layout.menu = {panelX + 2, actionBoxY + 1, panelW - 4, actionBoxH - 2};
     return layout;
+}
+
+static void updateDateEntryPageHeader(const DateEntryPageLayout& layout, const nlohmann::json& entry) {
+    int y = entry.value("year", 0);
+    int m = entry.value("month", 0);
+    int d = entry.value("day", 0);
+    int segCount = (entry.contains("segments") && entry["segments"].is_array())
+        ? static_cast<int>(entry["segments"].size()) : 0;
+
+    fillLine(layout.dateX, 7, layout.dateW, L' ', ATTR_NORMAL);
+    fillLine(layout.countX, 8, layout.countW, L' ', ATTR_NORMAL);
+    fillLine(layout.modeX, 9, layout.modeW, L' ', ATTR_NORMAL);
+    writeAtColor(layout.dateX, 7, fitTextToWidth(L"DATE : " + formatDateW(y, m, d), layout.dateW), AMBER);
+    writeAtColor(layout.countX, 8, fitTextToWidth(L"SEGMENTS : " + std::to_wstring(segCount), layout.countW), AMBER);
+    writeAtColor(layout.modeX, 9, fitTextToWidth(L"MODE : PREVIEW + EDIT OPERATIONS", layout.modeW), AMBER_DIM);
+
+    fillLine(layout.previewLabelX, layout.previewY - 2, layout.previewLabelW, L' ', ATTR_NORMAL);
+    fillLine(layout.actionLabelX, layout.menu.menuY - 2, layout.actionLabelW, L' ', ATTR_NORMAL);
+    writeAtColor(layout.previewLabelX, layout.previewY - 2, fitTextToWidth(L"[ ENTRY_LOG ]", layout.previewLabelW), AMBER_DIM);
+    writeAtColor(layout.actionLabelX, layout.menu.menuY - 2, fitTextToWidth(L"[ SEGMENT_ACTIONS ]", layout.actionLabelW), AMBER_DIM);
+
+    fillLine(layout.hintX, layout.statusY - 1, layout.hintW, L' ', ATTR_NORMAL);
+    writeAtColor(layout.hintX, layout.statusY - 1, fitTextToWidth(L"Enter执行  Esc返回  PgUp/PgDn翻页", layout.hintW), AMBER_DIM);
 }
 
 static int pickEntrySegment(const nlohmann::json& entry, const std::wstring& title) {
@@ -2080,9 +2124,11 @@ static int pickEntrySegment(const nlohmann::json& entry, const std::wstring& tit
 }
 
 static void editDateEntryPage(DiaryStore& store, const std::string& password, size_t entryIdx) {
+    DateEntryPageLayout layout = renderDateEntryPage(store.entries()[entryIdx]);
+
     while (entryIdx < store.entryCount()) {
         auto& entry = store.entries()[entryIdx];
-        DateEntryPageLayout layout = renderDateEntryPage(entry);
+        updateDateEntryPageHeader(layout, entry);
         writeWrappedPanelLines(layout.previewX, layout.previewY, layout.previewW, layout.previewH,
                                buildEntryPreviewLines(entry), AMBER);
 
@@ -2107,7 +2153,10 @@ static void editDateEntryPage(DiaryStore& store, const std::string& password, si
             layout.menu.menuW, layout.menu.menuH,
             opItems, segCount > 0 ? 1 : static_cast<int>(segCount + 1));
 
-        if (opChoice == MENU_RESIZE) continue;
+        if (opChoice == MENU_RESIZE) {
+            layout = renderDateEntryPage(entry);
+            continue;
+        }
         if (opChoice == MENU_ESC || opChoice == static_cast<int>(opItems.size()) - 1) return;
 
         if (opChoice >= 1 && opChoice <= static_cast<int>(segCount)) {
