@@ -365,10 +365,9 @@ int menuSelectInRegion(int x, int y, int w, int h,
     int prevSelIdx = -1;
     int visibleCount = (int)items.size();
     if (visibleCount > h) visibleCount = h;
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    int watchW = csbi.dwSize.X;
-    int watchH = csbi.dwSize.Y;
+    ConsoleViewport view = getConsoleViewport();
+    int watchW = view.w;
+    int watchH = view.h;
 
     CONSOLE_CURSOR_INFO oldCursorInfo{};
     GetConsoleCursorInfo(g_hOut, &oldCursorInfo);
@@ -403,14 +402,20 @@ int menuSelectInRegion(int x, int y, int w, int h,
             SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
             return MENU_RESIZE;
         }
-        int ch = _getch();
-        if (ch == 0xE0 || ch == 0) {
-            int key = _getch();
+        INPUT_RECORD ir{};
+        DWORD read = 0;
+        if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
+
+        WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+        WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
+
+        if (vk == VK_UP || vk == VK_DOWN) {
             int oldIdx = (prevSelIdx >= 0) ? prevSelIdx : -1;
             int oldPos = selPos;
-            if (key == 0x48) {       // Up
+            if (vk == VK_UP) {
                 selPos = (selPos - 1 + static_cast<int>(si.size())) % static_cast<int>(si.size());
-            } else if (key == 0x50) { // Down
+            } else {
                 selPos = (selPos + 1) % static_cast<int>(si.size());
             }
             if (selPos != oldPos) {
@@ -418,15 +423,15 @@ int menuSelectInRegion(int x, int y, int w, int h,
                 drawItemLine(si[selPos], true);
                 prevSelIdx = si[selPos];
             }
-        } else if (ch == '\r') {
+        } else if (vk == VK_RETURN) {
             SetConsoleTextAttribute(g_hOut, ATTR_NORMAL);
             SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
             return si[selPos];
-        } else if (ch == 27) {
+        } else if (vk == VK_ESCAPE) {
             SetConsoleTextAttribute(g_hOut, ATTR_NORMAL);
             SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
             return MENU_ESC;
-        } else if (ch >= '0' && ch <= '9') {
+        } else if (ch >= L'0' && ch <= L'9') {
             for (int i = 0; i < static_cast<int>(items.size()); ++i) {
                 if (!items[i].selectable) continue;
                 std::wstring t = items[i].text;
