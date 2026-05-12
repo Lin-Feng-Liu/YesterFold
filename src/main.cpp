@@ -754,9 +754,9 @@ static InputResult readPasswordCancelable(const std::string& prompt) {
         L"SECURE ACTION // IDENTITY CHECK",
         utf8_to_wstring(prompt),
         {
-            L"ESC enabled for safe abort",
-            L"INPUT remains hidden in memory",
-            L"RETURN to continue authentication",
+            L"Esc 已启用，可安全取消当前操作",
+            L"输入过程始终隐藏，不会明文回显",
+            L"按 Enter 继续身份验证",
         },
         L"VERIFY",
         AMBER,
@@ -1480,11 +1480,6 @@ static std::vector<std::wstring> buildCounterHistoryLines(const std::vector<std:
         std::wstring line = std::wstring(labels[shown]) + L" : " + utf8_to_wstring(*it);
         lines.push_back(line);
     }
-
-    if (history.size() >= 2) {
-        lines.push_back(L"");
-        lines.push_back(L"最新一次始终显示在最上方。");
-    }
     return lines;
 }
 
@@ -1668,11 +1663,10 @@ static void viewAllDiaries(const DiaryStore& store) {
         fillLine(4, 5, boxW - 8, L'─', AMBER_DIM);
         writeAtColor(4, 7, L"TOTAL : " + std::to_wstring(sorted.size()) + L" ENTRIES", AMBER);
         writeAtColor(4, 8, L"MODE  : ARCHIVE READER", AMBER);
-        writeAtColor(4, 9, L"SCROLL: PgUp/PgDn=翻页  Up/Down=滚动  Home/End=首尾  Esc=返回", AMBER_DIM);
 
         int panelX = 4;
         int panelW = boxW - 8;
-        int bodyBoxY = 11;
+        int bodyBoxY = 10;
         int contentBottom = boxH - 5;
         int bodyBoxH = contentBottom - bodyBoxY + 1;
         if (bodyBoxH < 6) bodyBoxH = 6;
@@ -1723,10 +1717,11 @@ static void viewAllDiaries(const DiaryStore& store) {
                             L"-" + std::to_wstring(visibleEnd) +
                             L" / " + std::to_wstring(total) +
                             L"    ENTRIES " + std::to_wstring(sorted.size());
+        std::wstring controls = L"PgUp/PgDn翻页  Up/Down滚动  Home/End首尾  Esc返回";
         fillLine(1, layout.infoY, screenW - 2, L' ', ATTR_NORMAL);
         fillLine(1, layout.promptY, screenW - 2, L' ', ATTR_NORMAL);
         writeAtColor(3, layout.infoY, fitTextToWidth(info, screenW - 6), AMBER_DIM);
-        writeAtColor(3, layout.promptY, padOrTrimText(L">> ARCHIVE READY", screenW - 6), AMBER);
+        writeAtColor(3, layout.promptY, padOrTrimText(controls, screenW - 6), AMBER);
     };
 
     renderShell();
@@ -2724,7 +2719,6 @@ static void exportImportMenu(DiaryStore& store, const std::string& password) {
         writeAtColor(leftX + 2, topY + 2, L"导出 / 导入", AMBER_DIM);
         writeAtColor(leftX + 2, topY + 5, L"把日记导出为明文", AMBER);
         writeAtColor(leftX + 2, topY + 6, L"或从文本重新导回库中", AMBER);
-        writeAtColor(leftX + 2, topY + panelH - 3, L"先保功能稳，再谈花哨排版。", AMBER_DIM);
 
         std::vector<std::wstring> infoLines = {
             L"导出路径 : data\\export_diary.txt",
@@ -2732,13 +2726,12 @@ static void exportImportMenu(DiaryStore& store, const std::string& password) {
             L"",
             L"提示 : 导入会修改当前日记库。",
             L"建议 : 导入前先导出一份作为备份。",
-            L"说明 : 冲突处理逻辑保持原样，不改动核心功能。",
         };
         writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, panelH - 2, infoLines, AMBER);
 
         setFooterHintRegion(shell.x + 1, shell.y + shell.h - 2, shell.w - 2);
         fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
-        writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回  导入导出逻辑保持不变", AMBER_DIM);
+        writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回", AMBER_DIM);
         writeFooterHint(L">> 导出导入模块已就绪", AMBER);
 
         std::vector<MenuItem> items = {
@@ -2849,14 +2842,13 @@ static void counterPage(DiaryStore& store, const std::string& password) {
         std::wstring countText = std::to_wstring(count);
         int countX = leftX + std::max(2, (leftW - static_cast<int>(countText.size())) / 2);
         writeAtColor(countX, topY + 6, countText, 0x0F);
-        writeAtColor(leftX + 2, topY + heroH - 3, L"右侧显示最近几次触发时间。", AMBER_DIM);
 
         std::vector<std::wstring> infoLines = buildCounterHistoryLines(history);
         writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, heroH - 2, infoLines, AMBER);
 
         fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
         fillLine(shell.x + 1, shell.y + shell.h - 2, shell.w - 2, L' ', ATTR_NORMAL);
-        writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回  数值变更会立即保存", AMBER_DIM);
+        writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回", AMBER_DIM);
         writeAtColor(shell.x + 2, shell.y + shell.h - 2, padOrTrimText(L">> 神秘计数器已就绪", shell.w - 6), AMBER);
 
         std::vector<MenuItem> items = {
@@ -2950,7 +2942,6 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
                 break;
             case 4:  // 修改密码
                 changePasswordInteractive(password);
-                pauseScreen();
                 break;
             case 5:  // 神秘计数器
                 clearScreen();
