@@ -56,6 +56,7 @@ void DiaryStore::initEmpty() {
     data_["version"] = 1;
     data_["entries"] = nlohmann::json::array();
     data_["counter"] = 0;
+    data_["counter_history"] = nlohmann::json::array();
     loaded_ = true;
 }
 
@@ -111,4 +112,26 @@ int DiaryStore::getCounter() const {
 
 void DiaryStore::setCounter(int value) {
     data_["counter"] = value;
+}
+
+std::vector<std::string> DiaryStore::getCounterHistory() const {
+    std::vector<std::string> history;
+    if (!data_.contains("counter_history") || !data_["counter_history"].is_array()) return history;
+
+    for (const auto& item : data_["counter_history"]) {
+        if (item.is_string()) history.push_back(item.get<std::string>());
+    }
+    return history;
+}
+
+void DiaryStore::pushCounterHistory(const std::string& timestamp, size_t maxCount) {
+    if (!data_.contains("counter_history") || !data_["counter_history"].is_array()) {
+        data_["counter_history"] = nlohmann::json::array();
+    }
+
+    auto& history = data_["counter_history"];
+    history.push_back(timestamp);
+    while (history.size() > maxCount) {
+        history.erase(history.begin());
+    }
 }

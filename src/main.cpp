@@ -103,6 +103,22 @@ struct RegionMenuLayout {
     int menuH;
 };
 
+struct DateSelectorLayout {
+    int pathX;
+    int pathW;
+    int modeX;
+    int modeW;
+    int navX;
+    int navW;
+    int titleX;
+    int titleW;
+    int infoX;
+    int infoY;
+    int infoW;
+    int infoH;
+    RegionMenuLayout menu;
+};
+
 struct DateEntryPageLayout {
     int previewX;
     int previewY;
@@ -1401,6 +1417,41 @@ static std::string getCurrentTimeStr() {
     return std::string(buf);
 }
 
+static std::string getCurrentTimestampStr() {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%04d/%02d/%02d %02d:%02d:%02d",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    return std::string(buf);
+}
+
+static std::vector<std::wstring> buildCounterHistoryLines(const std::vector<std::string>& history) {
+    std::vector<std::wstring> lines;
+    lines.push_back(L"TRACE WINDOW");
+    lines.push_back(L"────────────────────");
+
+    if (history.empty()) {
+        lines.push_back(L"NO TRIGGER RECORDED");
+        lines.push_back(L"");
+        lines.push_back(L"第一次触发后，这里会出现最近几次的时间链。");
+        return lines;
+    }
+
+    static const wchar_t* labels[] = {L"LATEST", L"PREV-1", L"PREV-2", L"PREV-3", L"PREV-4", L"PREV-5"};
+    int shown = 0;
+    for (auto it = history.rbegin(); it != history.rend() && shown < 5; ++it, ++shown) {
+        std::wstring line = std::wstring(labels[shown]) + L" : " + utf8_to_wstring(*it);
+        lines.push_back(line);
+    }
+
+    if (history.size() >= 2) {
+        lines.push_back(L"");
+        lines.push_back(L"latest pulse stays at the top.");
+    }
+    return lines;
+}
+
 static std::string getCurrentDateStr() {
     int y, m, d;
     getCurrentDate(y, m, d);
@@ -1847,9 +1898,7 @@ static std::vector<std::wstring> buildEntryHistoryLines(const nlohmann::json& en
     return historyLines;
 }
 
-static RegionMenuLayout renderDateSelectorPage(const std::wstring& listTitle,
-                                               const std::wstring& pathLine,
-                                               const std::vector<std::wstring>& infoLines) {
+static DateSelectorLayout renderDateSelectorPageFrame() {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
     int boxW = csbi.dwSize.X;
@@ -1860,9 +1909,6 @@ static RegionMenuLayout renderDateSelectorPage(const std::wstring& listTitle,
 
     writeAtColor(4, 4, L"[ DATE_SELECTOR ]", AMBER_DIM);
     fillLine(4, 5, boxW - 8, L'─', AMBER_DIM);
-    writeAtColor(4, 7, L"PATH : " + pathLine, AMBER);
-    writeAtColor(4, 8, L"MODE : YEAR -> MONTH -> DAY", AMBER);
-    writeAtColor(4, 9, L"NAV  : Enter进入  Esc返回  PgUp/PgDn翻页  Home/End首尾", AMBER_DIM);
 
     int panelX = 4;
     int panelW = boxW - 8;
@@ -1877,17 +1923,49 @@ static RegionMenuLayout renderDateSelectorPage(const std::wstring& listTitle,
 
     drawSingleBox(panelX, bodyY, leftBoxW, bodyH);
     drawSingleBox(rightBoxX, bodyY, rightBoxW, bodyH);
-    writeAtColor(panelX + 2, bodyY - 1, L"[ " + listTitle + L" ]", AMBER_DIM);
     writeAtColor(rightBoxX + 2, bodyY - 1, L"[ CONTEXT ]", AMBER_DIM);
-
-    writeWrappedPanelLines(rightBoxX + 2, bodyY + 1, rightBoxW - 4, bodyH - 2, infoLines, AMBER);
 
     fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
     fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
     writeAtColor(3, boxH - 3, L"SELECT a time branch and enter its node.", AMBER_DIM);
     writeAtColor(3, boxH - 2, padOrTrimText(L">> DATE INDEX READY", boxW - 6), AMBER);
 
-    return {panelX + 2, bodyY + 1, leftBoxW - 4, bodyH - 2};
+    DateSelectorLayout layout;
+    layout.pathX = 4;
+    layout.pathW = boxW - 8;
+    layout.modeX = 4;
+    layout.modeW = boxW - 8;
+    layout.navX = 4;
+    layout.navW = boxW - 8;
+    layout.titleX = panelX + 2;
+    layout.titleW = leftBoxW - 4;
+    layout.infoX = rightBoxX + 2;
+    layout.infoY = bodyY + 1;
+    layout.infoW = rightBoxW - 4;
+    layout.infoH = bodyH - 2;
+    layout.menu = {panelX + 2, bodyY + 1, leftBoxW - 4, bodyH - 2};
+    return layout;
+}
+
+static void updateDateSelectorPage(const DateSelectorLayout& layout,
+                                   const std::wstring& listTitle,
+                                   const std::wstring& pathLine,
+                                   const std::vector<std::wstring>& infoLines) {
+    fillLine(layout.pathX, 7, layout.pathW, L' ', ATTR_NORMAL);
+    fillLine(layout.modeX, 8, layout.modeW, L' ', ATTR_NORMAL);
+    fillLine(layout.navX, 9, layout.navW, L' ', ATTR_NORMAL);
+    writeAtColor(layout.pathX, 7, fitTextToWidth(L"PATH : " + pathLine, layout.pathW), AMBER);
+    writeAtColor(layout.modeX, 8, fitTextToWidth(L"MODE : YEAR -> MONTH -> DAY", layout.modeW), AMBER);
+    writeAtColor(layout.navX, 9, fitTextToWidth(L"NAV  : Enter进入  Esc返回  PgUp/PgDn翻页  Home/End首尾", layout.navW), AMBER_DIM);
+
+    fillLine(layout.titleX, layout.menu.menuY - 2, layout.titleW, L' ', ATTR_NORMAL);
+    writeAtColor(layout.titleX, layout.menu.menuY - 2, fitTextToWidth(L"[ " + listTitle + L" ]", layout.titleW), AMBER_DIM);
+
+    for (int row = 0; row < layout.menu.menuH; ++row) {
+        fillLine(layout.menu.menuX, layout.menu.menuY + row, layout.menu.menuW, L' ', ATTR_NORMAL);
+    }
+
+    writeWrappedPanelLines(layout.infoX, layout.infoY, layout.infoW, layout.infoH, infoLines, AMBER);
 }
 
 static DateEntryPageLayout renderDateEntryPage(const nlohmann::json& entry) {
@@ -2112,6 +2190,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
     int stage = 0;
     int selYear = 0;
     int selMonth = 0;
+    DateSelectorLayout selectorLayout = renderDateSelectorPageFrame();
 
     while (true) {
         auto sorted = store.getSortedIndices();
@@ -2214,10 +2293,16 @@ static void editByDate(DiaryStore& store, const std::string& password) {
             };
         }
 
-        RegionMenuLayout menu = renderDateSelectorPage(listTitle, pathLine, infoLines);
-        int choice = menuSelectScrollableInRegion(menu.menuX, menu.menuY, menu.menuW, menu.menuH, items, 1);
+        updateDateSelectorPage(selectorLayout, listTitle, pathLine, infoLines);
+        int choice = menuSelectScrollableInRegion(
+            selectorLayout.menu.menuX, selectorLayout.menu.menuY,
+            selectorLayout.menu.menuW, selectorLayout.menu.menuH,
+            items, 1);
 
-        if (choice == MENU_RESIZE) continue;
+        if (choice == MENU_RESIZE) {
+            selectorLayout = renderDateSelectorPageFrame();
+            continue;
+        }
         if (choice == MENU_ESC) {
             if (stage == 0) return;
             stage--;
@@ -2239,6 +2324,7 @@ static void editByDate(DiaryStore& store, const std::string& password) {
         } else {
             size_t entryIdx = entryIndices[choice - 1];
             editDateEntryPage(store, password, entryIdx);
+            selectorLayout = renderDateSelectorPageFrame();
         }
     }
 }
@@ -2654,6 +2740,7 @@ static void changePasswordInteractive(const std::string& currentPass) {
 static void counterPage(DiaryStore& store, const std::string& password) {
     while (true) {
         int count = store.getCounter();
+        std::vector<std::string> history = store.getCounterHistory();
 
         CenteredRect shell = drawTerminalShell(L"COUNTER.NODE // LOCAL_DIARY_ENV", true);
         int leftX = shell.x + 6;
@@ -2671,23 +2758,16 @@ static void counterPage(DiaryStore& store, const std::string& password) {
         drawSingleBox(leftX, menuY, shell.w - 12, menuH);
 
         writeAtColor(leftX + 2, topY - 1, L"[ MYSTERY_COUNTER ]", AMBER_DIM);
-        writeAtColor(rightX + 2, topY - 1, L"[ COUNTER_STATE ]", AMBER_DIM);
+        writeAtColor(rightX + 2, topY - 1, L"[ RECENT_PULSES ]", AMBER_DIM);
         writeAtColor(leftX + 2, menuY - 1, L"[ OPERATIONS ]", AMBER_DIM);
 
         writeAtColor(leftX + 2, topY + 2, L"CURRENT VALUE", AMBER_DIM);
         std::wstring countText = std::to_wstring(count);
         int countX = leftX + std::max(2, (leftW - static_cast<int>(countText.size())) / 2);
         writeAtColor(countX, topY + 6, countText, 0x0F);
-        writeAtColor(leftX + 2, topY + heroH - 3, L"Persistent local counter node.", AMBER_DIM);
+        writeAtColor(leftX + 2, topY + heroH - 3, L"Tap history is archived on the right.", AMBER_DIM);
 
-        std::vector<std::wstring> infoLines = {
-            L"STATE : persisted",
-            L"STORE : data\\diary.enc",
-            L"RANGE : >= 0",
-            L"SYNC  : updates saved immediately",
-            L"",
-            L"一个轻量的小模块，专门记录这个神秘数字。",
-        };
+        std::vector<std::wstring> infoLines = buildCounterHistoryLines(history);
         writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, heroH - 2, infoLines, AMBER);
 
         fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
@@ -2708,6 +2788,7 @@ static void counterPage(DiaryStore& store, const std::string& password) {
 
         if (choice == 0) {
             store.setCounter(count + 1);
+            store.pushCounterHistory(getCurrentTimestampStr());
             store.save(DIARY_PATH, password);
         } else if (choice == 1) {
             auto scRes = readLineCancelable("输入新次数 (非负整数, Esc 取消): ");
@@ -2729,6 +2810,7 @@ static void counterPage(DiaryStore& store, const std::string& password) {
             }
 
             store.setCounter(newVal);
+            store.pushCounterHistory(getCurrentTimestampStr());
             store.save(DIARY_PATH, password);
             showFullScreenMessage(L"COUNTER UPDATED", {L"[计数器已更新]"});
             pauseScreen();

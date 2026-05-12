@@ -27,6 +27,8 @@ public:
     // 神秘计数器
     int getCounter() const;
     void setCounter(int value);
+    std::vector<std::string> getCounterHistory() const;
+    void pushCounterHistory(const std::string& timestamp, size_t maxCount = 6);
 
     // 返回按日期排序的条目索引
     std::vector<size_t> getSortedIndices() const;
