@@ -24,13 +24,46 @@ static const int MODE_SWITCH = 1;
 constexpr WORD ACCESS_WARN_ATTR   = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
 constexpr WORD ACCESS_DANGER_ATTR = FOREGROUND_RED | FOREGROUND_INTENSITY;
 
-static void pauseScreen() {
-    FlushConsoleInputBuffer(g_hIn);
+static std::wstring fitTextToWidth(const std::wstring& text, int maxWidth);
+
+struct FooterHintRegion {
+    int x;
+    int y;
+    int w;
+};
+
+static FooterHintRegion g_footerHintRegion{1, 0, 0};
+
+static FooterHintRegion getDefaultFooterHintRegion() {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    int pauseY = std::max(1, static_cast<int>(csbi.dwSize.Y) - 2);
-    fillLine(1, pauseY, csbi.dwSize.X - 2, L' ', ATTR_NORMAL);
-    writeAtColor(3, pauseY, L"按任意键继续...", AMBER);
+    return {1, std::max(1, static_cast<int>(csbi.dwSize.Y) - 2), csbi.dwSize.X - 2};
+}
+
+static void setFooterHintRegion(int x, int y, int w) {
+    g_footerHintRegion = {x, y, w};
+}
+
+static void resetFooterHintRegion() {
+    g_footerHintRegion = getDefaultFooterHintRegion();
+}
+
+static void clearFooterHintLine() {
+    FooterHintRegion region = g_footerHintRegion;
+    if (region.w <= 0) region = getDefaultFooterHintRegion();
+    fillLine(region.x, region.y, region.w, L' ', ATTR_NORMAL);
+}
+
+static void writeFooterHint(const std::wstring& text, WORD attr = AMBER) {
+    FooterHintRegion region = g_footerHintRegion;
+    if (region.w <= 0) region = getDefaultFooterHintRegion();
+    fillLine(region.x, region.y, region.w, L' ', ATTR_NORMAL);
+    writeAtColor(region.x + 2, region.y, fitTextToWidth(text, std::max(1, region.w - 4)), attr);
+}
+
+static void pauseScreen() {
+    FlushConsoleInputBuffer(g_hIn);
+    writeFooterHint(L"按任意键继续...", AMBER);
     DWORD oldMode; GetConsoleMode(g_hIn, &oldMode);
     SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
     while (true) {
@@ -39,7 +72,7 @@ static void pauseScreen() {
         if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) break;
     }
     SetConsoleMode(g_hIn, oldMode);
-    fillLine(1, pauseY, csbi.dwSize.X - 2, L' ', ATTR_NORMAL);
+    clearFooterHintLine();
 }
 
 static std::string readPassword(const std::string& prompt);
@@ -137,7 +170,9 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
                                          const std::wstring& promptLabel,
                                          const std::vector<std::wstring>& statusLines,
                                          const std::wstring& modeLabel,
-                                         WORD promptBoxAttr = AMBER);
+                                         WORD promptBoxAttr = AMBER,
+                                         bool allowEscape = false);
+static std::wstring fitTextToWidth(const std::wstring& text, int maxWidth);
 static InputResult readAccessPasswordPage(const std::wstring& headline,
                                           const std::wstring& promptLabel,
                                           const std::vector<std::wstring>& statusLines,
@@ -569,7 +604,7 @@ static InputResult readAccessPasswordPage(const std::wstring& headline,
                                           WORD promptBoxAttr,
                                           bool allowEscape) {
     while (true) {
-        AccessPageLayout layout = renderAccessPage(headline, promptLabel, statusLines, modeLabel, promptBoxAttr);
+        AccessPageLayout layout = renderAccessPage(headline, promptLabel, statusLines, modeLabel, promptBoxAttr, allowEscape);
         InputResult result = readPasswordFieldAt(layout.fieldX, layout.fieldY, layout.fieldW, allowEscape);
         if (result.resized) continue;
         return result;
@@ -580,7 +615,8 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
                                          const std::wstring& promptLabel,
                                          const std::vector<std::wstring>& statusLines,
                                          const std::wstring& modeLabel,
-                                         WORD promptBoxAttr) {
+                                         WORD promptBoxAttr,
+                                         bool allowEscape) {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
     CenteredRect shell = drawTerminalShell(L"AUTH.ACCESS // LOCAL_DIARY_ENV", true);
@@ -621,7 +657,10 @@ static AccessPageLayout renderAccessPage(const std::wstring& headline,
     writeAtColor(boxX + 2, boxY + 1, promptLabel, AMBER);
     writeAtColor(boxX + 2, boxY + 3, L">> ", AMBER);
     fillLine(boxX + 5, boxY + 3, promptBoxW - 7, L' ', ATTR_NORMAL);
-    writeAtColor(boxX + 2, boxY + 5, L"Enter=提交  Backspace=删除  Esc=取消(若可用)", AMBER_DIM);
+    std::wstring hint = allowEscape
+        ? L"Enter=提交  Backspace=删除  Esc=取消"
+        : L"Enter=提交  Backspace=删除";
+    writeAtColor(boxX + 2, boxY + 5, hint, AMBER_DIM);
 
     writeAtColor(shell.x + 2, shell.y + shell.h - 2, L">> AWAITING_CREDENTIAL...", AMBER);
 
@@ -1375,15 +1414,12 @@ static EditorResult openDiaryEditor(const std::wstring& initialContent,
 static void showFullScreenMessage(const std::wstring& title,
                                   const std::vector<std::wstring>& lines,
                                   const std::wstring& prompt = L"按任意键继续...") {
-    drawTerminalShell(L"STATUS.PANEL // LOCAL_DIARY_ENV");
-    int boxX = 6;
-    int boxY = 6;
-
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    int boxW = csbi.dwSize.X - 12;
+    CenteredRect shell = drawTerminalShell(L"STATUS.PANEL // LOCAL_DIARY_ENV", true);
+    int boxX = shell.x + 6;
+    int boxY = shell.y + 6;
+    int boxW = shell.w - 12;
     int boxH = std::max(8, static_cast<int>(lines.size()) + 6);
-    if (boxY + boxH >= csbi.dwSize.Y - 2) boxH = csbi.dwSize.Y - boxY - 3;
+    if (boxY + boxH >= shell.y + shell.h - 2) boxH = shell.y + shell.h - boxY - 3;
 
     drawSingleBox(boxX, boxY, boxW, boxH);
     writeAtColor(boxX + 2, boxY - 1, L"[ " + title + L" ]", AMBER_DIM);
@@ -1395,8 +1431,8 @@ static void showFullScreenMessage(const std::wstring& title,
         y++;
     }
 
-    fillLine(1, csbi.dwSize.Y - 2, csbi.dwSize.X - 2, L' ', ATTR_NORMAL);
-    writeAtColor(3, csbi.dwSize.Y - 2, prompt, AMBER);
+    setFooterHintRegion(shell.x + 1, shell.y + shell.h - 2, shell.w - 2);
+    writeFooterHint(prompt, AMBER);
 }
 
 // ─── 日期工具 ───
@@ -1428,17 +1464,17 @@ static std::string getCurrentTimestampStr() {
 
 static std::vector<std::wstring> buildCounterHistoryLines(const std::vector<std::string>& history) {
     std::vector<std::wstring> lines;
-    lines.push_back(L"TRACE WINDOW");
+    lines.push_back(L"最近触发记录");
     lines.push_back(L"────────────────────");
 
     if (history.empty()) {
-        lines.push_back(L"NO TRIGGER RECORDED");
+        lines.push_back(L"还没有触发记录");
         lines.push_back(L"");
         lines.push_back(L"第一次触发后，这里会出现最近几次的时间链。");
         return lines;
     }
 
-    static const wchar_t* labels[] = {L"LATEST", L"PREV-1", L"PREV-2", L"PREV-3", L"PREV-4", L"PREV-5"};
+    static const wchar_t* labels[] = {L"最近一次", L"上一次", L"上上次", L"更早一次", L"再早一次", L"更早记录"};
     int shown = 0;
     for (auto it = history.rbegin(); it != history.rend() && shown < 5; ++it, ++shown) {
         std::wstring line = std::wstring(labels[shown]) + L" : " + utf8_to_wstring(*it);
@@ -1447,7 +1483,7 @@ static std::vector<std::wstring> buildCounterHistoryLines(const std::vector<std:
 
     if (history.size() >= 2) {
         lines.push_back(L"");
-        lines.push_back(L"latest pulse stays at the top.");
+        lines.push_back(L"最新一次始终显示在最上方。");
     }
     return lines;
 }
@@ -1927,8 +1963,8 @@ static DateSelectorLayout renderDateSelectorPageFrame() {
 
     fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
     fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
-    writeAtColor(3, boxH - 3, L"SELECT a time branch and enter its node.", AMBER_DIM);
-    writeAtColor(3, boxH - 2, padOrTrimText(L">> DATE INDEX READY", boxW - 6), AMBER);
+    writeAtColor(3, boxH - 3, L"选择一个时间节点并进入。", AMBER_DIM);
+    writeAtColor(3, boxH - 2, padOrTrimText(L">> 日期索引已就绪", boxW - 6), AMBER);
 
     DateSelectorLayout layout;
     layout.pathX = 4;
@@ -2006,8 +2042,8 @@ static DateEntryPageLayout renderDateEntryPage(const nlohmann::json& entry) {
 
     fillLine(1, boxH - 3, boxW - 2, L' ', ATTR_NORMAL);
     fillLine(1, boxH - 2, boxW - 2, L' ', ATTR_NORMAL);
-    writeAtColor(3, boxH - 3, L"TIP : preview follows window size; action list may scroll independently.", AMBER_DIM);
-    writeAtColor(3, boxH - 2, padOrTrimText(L">> ENTRY OPERATIONS READY", boxW - 6), AMBER);
+    writeAtColor(3, boxH - 3, L"预览区会跟随窗口变化，操作列表可单独滚动。", AMBER_DIM);
+    writeAtColor(3, boxH - 2, padOrTrimText(L">> 当日日记操作已就绪", boxW - 6), AMBER);
 
     DateEntryPageLayout layout;
     layout.previewX = panelX + 2;
@@ -2666,22 +2702,67 @@ static void importDiary(DiaryStore& store, const std::string& password) {
 
 static void exportImportMenu(DiaryStore& store, const std::string& password) {
     while (true) {
-        clearScreen();
+        CenteredRect shell = drawTerminalShell(L"TRANSFER.NODE // LOCAL_DIARY_ENV", true);
+        int leftX = shell.x + 6;
+        int topY = shell.y + 5;
+        int leftW = 34;
+        int rightX = leftX + leftW + 4;
+        int rightW = shell.x + shell.w - rightX - 6;
+        int panelH = 13;
+        int menuY = topY + panelH + 1;
+        int menuH = shell.y + shell.h - menuY - 4;
+        if (menuH < 6) menuH = 6;
+
+        drawSingleBox(leftX, topY, leftW, panelH);
+        drawSingleBox(rightX, topY, rightW, panelH);
+        drawSingleBox(leftX, menuY, shell.w - 12, menuH);
+
+        writeAtColor(leftX + 2, topY - 1, L"[ TRANSFER_MENU ]", AMBER_DIM);
+        writeAtColor(rightX + 2, topY - 1, L"[ PIPELINE_INFO ]", AMBER_DIM);
+        writeAtColor(leftX + 2, menuY - 1, L"[ OPERATIONS ]", AMBER_DIM);
+
+        writeAtColor(leftX + 2, topY + 2, L"导出 / 导入", AMBER_DIM);
+        writeAtColor(leftX + 2, topY + 5, L"把日记导出为明文", AMBER);
+        writeAtColor(leftX + 2, topY + 6, L"或从文本重新导回库中", AMBER);
+        writeAtColor(leftX + 2, topY + panelH - 3, L"先保功能稳，再谈花哨排版。", AMBER_DIM);
+
+        std::vector<std::wstring> infoLines = {
+            L"导出路径 : data\\export_diary.txt",
+            L"导入来源 : data\\import_diary.txt / 直接粘贴",
+            L"",
+            L"提示 : 导入会修改当前日记库。",
+            L"建议 : 导入前先导出一份作为备份。",
+            L"说明 : 冲突处理逻辑保持原样，不改动核心功能。",
+        };
+        writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, panelH - 2, infoLines, AMBER);
+
+        setFooterHintRegion(shell.x + 1, shell.y + shell.h - 2, shell.w - 2);
+        fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
+        writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回  导入导出逻辑保持不变", AMBER_DIM);
+        writeFooterHint(L">> 导出导入模块已就绪", AMBER);
+
         std::vector<MenuItem> items = {
-            {L"--- 导出 / 导入 ---", false},
             {L"1. 导出日记", true},
             {L"2. 导入日记", true},
             {L"0. 返回", true},
         };
-        int choice = menuSelect(items, 1);
-        clearScreen();
-        if (choice == MENU_ESC || choice == 3) {
+        int choice = menuSelectInRegion(leftX + 2, menuY + 1, shell.w - 16, menuH - 2, items, 0);
+
+        if (choice == MENU_RESIZE) {
+            resetFooterHintRegion();
+            continue;
+        }
+        if (choice == MENU_ESC || choice == 2) {
+            resetFooterHintRegion();
             break;
         }
-        if (choice == 1) {
+
+        resetFooterHintRegion();
+        clearScreen();
+        if (choice == 0) {
             exportDiary(store);
             pauseScreen();
-        } else if (choice == 2) {
+        } else if (choice == 1) {
             importDiary(store, password);
             pauseScreen();
         } else {
@@ -2693,30 +2774,32 @@ static void exportImportMenu(DiaryStore& store, const std::string& password) {
 // ─── 修改密码 ───
 
 static void changePasswordInteractive(const std::string& currentPass) {
-    clearScreen();
-    wprintln(L"══════════ 修改密码 ══════════");
+    CenteredRect shell = drawTerminalShell(L"PASSWORD.UPDATE // LOCAL_DIARY_ENV", true);
+    setFooterHintRegion(shell.x + 1, shell.y + shell.h - 2, shell.w - 2);
 
     auto vRes = readPasswordCancelable("输入当前密码确认身份 (Esc 取消): ");
-    if (vRes.cancelled) return;
+    if (vRes.cancelled) { resetFooterHintRegion(); return; }
     if (vRes.value != currentPass) {
-        wprintln(L"身份验证失败!");
+        showFullScreenMessage(L"VERIFY FAILED", {L"身份验证失败!"});
         sodium_memzero(vRes.value.data(), vRes.value.size());
+        resetFooterHintRegion();
         return;
     }
     sodium_memzero(vRes.value.data(), vRes.value.size());
 
     auto nRes = readPasswordCancelable("输入新密码 (Esc 取消): ");
-    if (nRes.cancelled) return;
+    if (nRes.cancelled) { resetFooterHintRegion(); return; }
     std::string newPass = nRes.value;
 
     auto cRes = readPasswordCancelable("确认新密码 (Esc 取消): ");
-    if (cRes.cancelled) { sodium_memzero(newPass.data(), newPass.size()); return; }
+    if (cRes.cancelled) { sodium_memzero(newPass.data(), newPass.size()); resetFooterHintRegion(); return; }
     std::string newPassConfirm = cRes.value;
 
     if (newPass != newPassConfirm) {
-        wprintln(L"两次密码不一致!");
+        showFullScreenMessage(L"MISMATCH", {L"两次密码不一致!"});
         sodium_memzero(newPass.data(), newPass.size());
         sodium_memzero(newPassConfirm.data(), newPassConfirm.size());
+        resetFooterHintRegion();
         return;
     }
     sodium_memzero(newPassConfirm.data(), newPassConfirm.size());
@@ -2725,14 +2808,15 @@ static void changePasswordInteractive(const std::string& currentPass) {
     DiaryStore store;
     if (store.load(DIARY_PATH, currentPass)) {
         if (store.save(DIARY_PATH, newPass)) {
-            wprintln(L"[密码已修改]  (^_^)");
+            showFullScreenMessage(L"PASSWORD UPDATED", {L"[密码已修改]  (^_^)"});
         } else {
-            wprintln(L"[保存失败!]");
+            showFullScreenMessage(L"SAVE FAILED", {L"[保存失败!]"});
         }
     } else {
-        wprintln(L"[解密失败，密码修改未完成]");
+        showFullScreenMessage(L"DECRYPT FAILED", {L"[解密失败，密码修改未完成]"});
     }
     sodium_memzero(newPass.data(), newPass.size());
+    resetFooterHintRegion();
 }
 
 // ─── 神秘计数器 ───
@@ -2761,11 +2845,11 @@ static void counterPage(DiaryStore& store, const std::string& password) {
         writeAtColor(rightX + 2, topY - 1, L"[ RECENT_PULSES ]", AMBER_DIM);
         writeAtColor(leftX + 2, menuY - 1, L"[ OPERATIONS ]", AMBER_DIM);
 
-        writeAtColor(leftX + 2, topY + 2, L"CURRENT VALUE", AMBER_DIM);
+        writeAtColor(leftX + 2, topY + 2, L"当前计数", AMBER_DIM);
         std::wstring countText = std::to_wstring(count);
         int countX = leftX + std::max(2, (leftW - static_cast<int>(countText.size())) / 2);
         writeAtColor(countX, topY + 6, countText, 0x0F);
-        writeAtColor(leftX + 2, topY + heroH - 3, L"Tap history is archived on the right.", AMBER_DIM);
+        writeAtColor(leftX + 2, topY + heroH - 3, L"右侧显示最近几次触发时间。", AMBER_DIM);
 
         std::vector<std::wstring> infoLines = buildCounterHistoryLines(history);
         writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, heroH - 2, infoLines, AMBER);
@@ -2773,7 +2857,7 @@ static void counterPage(DiaryStore& store, const std::string& password) {
         fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
         fillLine(shell.x + 1, shell.y + shell.h - 2, shell.w - 2, L' ', ATTR_NORMAL);
         writeAtColor(shell.x + 2, shell.y + shell.h - 3, L"Enter执行  Esc返回  数值变更会立即保存", AMBER_DIM);
-        writeAtColor(shell.x + 2, shell.y + shell.h - 2, padOrTrimText(L">> COUNTER READY", shell.w - 6), AMBER);
+        writeAtColor(shell.x + 2, shell.y + shell.h - 2, padOrTrimText(L">> 神秘计数器已就绪", shell.w - 6), AMBER);
 
         std::vector<MenuItem> items = {
             {L"1. 次数加一", true},
