@@ -32,6 +32,7 @@ int wcharWidth(wchar_t ch) {
     if (ch >= 0x4E00 && ch <= 0x9FFF) return 2;
     if (ch >= 0x3000 && ch <= 0x303F) return 2;
     if (ch >= 0xFF00 && ch <= 0xFFEF) return 2;
+    if (ch == 0x2018 || ch == 0x2019 || ch == 0x201C || ch == 0x201D) return 1;
     if (ch >= 0x2000 && ch <= 0x206F) return 2;
     if (ch == 0x2014) return 2;
     if (ch < 0x80) return 1;

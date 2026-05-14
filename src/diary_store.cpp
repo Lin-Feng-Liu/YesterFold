@@ -135,3 +135,14 @@ void DiaryStore::pushCounterHistory(const std::string& timestamp, size_t maxCoun
         history.erase(history.begin());
     }
 }
+
+void DiaryStore::trimCounterHistoryTail(size_t removeCount) {
+    if (removeCount == 0) return;
+    if (!data_.contains("counter_history") || !data_["counter_history"].is_array()) return;
+
+    auto& history = data_["counter_history"];
+    while (removeCount > 0 && !history.empty()) {
+        history.erase(history.end() - 1);
+        --removeCount;
+    }
+}

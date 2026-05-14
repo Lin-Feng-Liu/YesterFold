@@ -1476,24 +1476,26 @@ static std::string getCurrentTimestampStr() {
     return std::string(buf);
 }
 
-static std::vector<std::wstring> buildCounterHistoryLines(const std::vector<std::string>& history) {
+static std::vector<std::wstring> buildCounterHistoryLines(const std::vector<std::string>& history,
+                                                          int currentCount) {
     std::vector<std::wstring> lines;
     lines.push_back(L"最近触发记录");
     lines.push_back(L"────────────────────");
 
     if (history.empty()) {
         lines.push_back(L"还没有触发记录");
-        lines.push_back(L"");
-        lines.push_back(L"第一次触发后，这里会出现最近几次的时间链。");
         return lines;
     }
 
-    static const wchar_t* labels[] = {L"最近一次", L"上一次", L"上上次", L"更早一次", L"再早一次", L"更早记录"};
     int shown = 0;
     for (auto it = history.rbegin(); it != history.rend() && shown < 5; ++it, ++shown) {
-        std::wstring line = std::wstring(labels[shown]) + L" : " + utf8_to_wstring(*it);
+        int recordNumber = currentCount - shown;
+        if (recordNumber < 0) break;
+        std::wstring line = L"#" + std::to_wstring(recordNumber) + L" : " + utf8_to_wstring(*it);
         lines.push_back(line);
     }
+
+    if (lines.empty()) lines.push_back(L"还没有可显示的记录");
     return lines;
 }
 
@@ -2907,7 +2909,7 @@ static void counterPage(DiaryStore& store, const std::string& password) {
         int countX = leftX + std::max(2, (leftW - static_cast<int>(countText.size())) / 2);
         writeAtColor(countX, topY + 6, countText, 0x0F);
 
-        std::vector<std::wstring> infoLines = buildCounterHistoryLines(history);
+        std::vector<std::wstring> infoLines = buildCounterHistoryLines(history, count);
         writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, heroH - 2, infoLines, AMBER);
 
         fillLine(shell.x + 1, shell.y + shell.h - 3, shell.w - 2, L' ', ATTR_NORMAL);
@@ -2947,6 +2949,12 @@ static void counterPage(DiaryStore& store, const std::string& password) {
                 wprintln(L"次数不能为负数");
                 pauseScreen();
                 continue;
+            }
+
+            if (newVal < count) {
+                size_t removeCount = static_cast<size_t>(count - newVal);
+                if (removeCount > history.size()) removeCount = history.size();
+                store.trimCounterHistoryTail(removeCount);
             }
 
             store.setCounter(newVal);
