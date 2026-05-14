@@ -41,6 +41,23 @@ struct MenuItem {
     bool selectable;
 };
 
+struct FooterHintRegion {
+    int x;
+    int y;
+    int w;
+};
+
+struct InputResult {
+    bool cancelled;
+    std::string value;
+    bool resized;
+};
+
+struct RenderedLine {
+    std::wstring text;
+    WORD attr = ATTR_NORMAL;
+};
+
 // ─── 基础工具 ───
 std::wstring utf8_to_wstring(const std::string& utf8);
 std::string wstring_to_utf8(const std::wstring& wstr);
@@ -60,6 +77,11 @@ void writeAt(int x, int y, const std::wstring& text);
 void writeAtColor(int x, int y, const std::wstring& text, WORD attr);
 void fillLine(int x, int y, int len, wchar_t ch, WORD attr);
 void fillRegion(int x, int y, int w, int h, wchar_t ch, WORD attr);
+std::wstring fitTextToWidth(const std::wstring& text, int maxWidth);
+std::vector<std::wstring> wrapDisplayText(const std::wstring& text, int maxWidth);
+std::vector<std::wstring> splitDisplayLines(const std::wstring& text, const std::wstring& prefix = L"");
+std::wstring padOrTrimText(const std::wstring& text, int width);
+int getAdaptiveWrapWidth(int availableWidth);
 
 // ─── 渲染组件 ───
 void drawDoubleBox(int x, int y, int w, int h);
@@ -69,9 +91,22 @@ void drawDiaryTitle(int x, int y);
 void drawHeatmapCell(int x, int y, int level);
 ConsoleViewport getConsoleViewport();
 CenteredRect getCenteredRect(int screenW, int screenH, int desiredW, int desiredH, int minW = 88, int minH = 12);
+CenteredRect drawTerminalShell(const std::wstring& envLabel, bool fixedCentered = false);
+void writeWrappedPanelLines(int x, int y, int w, int h,
+                            const std::vector<std::wstring>& logicalLines,
+                            WORD attr = AMBER);
 bool waitForConsoleInputOrResize(HANDLE hIn, int& outScreenW, int& outScreenH, DWORD timeoutMs = 80, DWORD settleMs = 160);
+
+// ─── 固定壳子页底栏提示 ───
+void setFooterHintRegion(int x, int y, int w);
+void resetFooterHintRegion();
+void clearFooterHintLine();
+void writeFooterHint(const std::wstring& text, WORD attr = AMBER);
+void pauseScreen();
 
 // ─── 区域方向键菜单 ───
 int menuSelect(const std::vector<MenuItem>& items, int startIdx = 0);
 int menuSelectInRegion(int x, int y, int w, int h,
                        const std::vector<MenuItem>& items, int startIdx = 0);
+int menuSelectScrollableInRegion(int x, int y, int w, int h,
+                                 const std::vector<MenuItem>& items, int startIdx = 0);

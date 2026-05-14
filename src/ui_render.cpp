@@ -1,10 +1,13 @@
 #include "ui_render.h"
 #include <cstdlib>
+#include <algorithm>
 
 // ─── 全局句柄定义 ───
 HANDLE g_hOut = nullptr;
 HANDLE g_hIn  = nullptr;
 ULONGLONG g_startTick = 0;
+
+static FooterHintRegion g_footerHintRegion{1, 0, 0};
 
 // ─── 基础工具实现 ───
 
@@ -85,6 +88,89 @@ void fillRegion(int x, int y, int w, int h, wchar_t ch, WORD attr) {
     for (int row = 0; row < h; ++row) {
         fillLine(x, y + row, w, ch, attr);
     }
+}
+
+std::wstring fitTextToWidth(const std::wstring& text, int maxWidth) {
+    if (maxWidth <= 0) return L"";
+    int width = 0;
+    std::wstring out;
+    for (wchar_t ch : text) {
+        int cw = wcharWidth(ch);
+        if (cw <= 0) continue;
+        if (width + cw > maxWidth) break;
+        out.push_back(ch);
+        width += cw;
+    }
+    return out;
+}
+
+std::vector<std::wstring> wrapDisplayText(const std::wstring& text, int maxWidth) {
+    std::vector<std::wstring> lines;
+    if (maxWidth <= 0) {
+        lines.push_back(L"");
+        return lines;
+    }
+
+    std::wstring current;
+    int width = 0;
+    for (wchar_t ch : text) {
+        if (ch == L'\r') continue;
+        if (ch == L'\n') {
+            lines.push_back(current);
+            current.clear();
+            width = 0;
+            continue;
+        }
+
+        int cw = wcharWidth(ch);
+        if (cw <= 0) continue;
+        if (width + cw > maxWidth && !current.empty()) {
+            lines.push_back(current);
+            current.clear();
+            width = 0;
+        }
+        current.push_back(ch);
+        width += cw;
+    }
+
+    if (!current.empty() || lines.empty()) lines.push_back(current);
+    return lines;
+}
+
+std::vector<std::wstring> splitDisplayLines(const std::wstring& text, const std::wstring& prefix) {
+    std::vector<std::wstring> lines;
+    std::wstring current = prefix;
+    bool touched = false;
+
+    for (wchar_t ch : text) {
+        if (ch == L'\r') continue;
+        if (ch == L'\n') {
+            lines.push_back(current);
+            current = prefix;
+            touched = true;
+            continue;
+        }
+        current.push_back(ch);
+        touched = true;
+    }
+
+    if (touched || !prefix.empty()) lines.push_back(current);
+    return lines;
+}
+
+std::wstring padOrTrimText(const std::wstring& text, int width) {
+    if (width <= 0) return L"";
+    std::wstring fitted = fitTextToWidth(text, width);
+    int used = 0;
+    for (wchar_t ch : fitted) used += wcharWidth(ch);
+    if (used < width) fitted.append(width - used, L' ');
+    return fitted;
+}
+
+int getAdaptiveWrapWidth(int availableWidth) {
+    if (availableWidth <= 0) return 0;
+    if (availableWidth <= 12) return availableWidth;
+    return availableWidth - ((availableWidth >= 36) ? 2 : 1);
 }
 
 // ─── 双线边框 ───
@@ -218,6 +304,107 @@ CenteredRect getCenteredRect(int screenW, int screenH, int desiredW, int desired
     if (rect.x < 0) rect.x = 0;
     if (rect.y < 0) rect.y = 0;
     return rect;
+}
+
+CenteredRect drawTerminalShell(const std::wstring& envLabel, bool fixedCentered) {
+    ConsoleViewport view = getConsoleViewport();
+    int screenW = view.w;
+    int screenH = view.h;
+    int boxW = screenW;
+    int boxH = screenH;
+    int boxX = view.x;
+    int boxY = view.y;
+
+    if (fixedCentered) {
+        CenteredRect rect = getCenteredRect(screenW, screenH, FIXED_SHELL_W, FIXED_SHELL_H, 88, 24);
+        boxX = view.x + rect.x;
+        boxY = view.y + rect.y;
+        boxW = rect.w;
+        boxH = rect.h;
+    } else if (boxW < 88) {
+        boxW = 88;
+    }
+
+    clearScreen();
+    fillRegion(view.x, view.y, screenW, screenH, L' ', ATTR_NORMAL);
+    drawDoubleBox(boxX, boxY, boxW, boxH);
+    writeAtColor(boxX + 2, boxY + 1, L"[>_ SYS.TERMINAL // " + envLabel, AMBER);
+    writeAtColor(boxX + boxW - 15, boxY + 1, L"[■][O][X] ", AMBER_DIM);
+    writeAtColor(boxX, boxY + 2, L"╠", AMBER);
+    fillLine(boxX + 1, boxY + 2, boxW - 2, L'═', AMBER);
+    writeAtColor(boxX + boxW - 1, boxY + 2, L"╣", AMBER);
+
+    return {boxX, boxY, boxW, boxH};
+}
+
+void writeWrappedPanelLines(int x, int y, int w, int h,
+                            const std::vector<std::wstring>& logicalLines,
+                            WORD attr) {
+    if (w <= 0 || h <= 0) return;
+
+    std::vector<std::wstring> wrappedLines;
+    int wrapW = getAdaptiveWrapWidth(w);
+    if (wrapW <= 0) wrapW = w;
+
+    for (const auto& raw : logicalLines) {
+        if (raw.empty()) {
+            wrappedLines.push_back(L"");
+            continue;
+        }
+        std::vector<std::wstring> wrapped = wrapDisplayText(raw, wrapW);
+        if (wrapped.empty()) wrapped.push_back(L"");
+        wrappedLines.insert(wrappedLines.end(), wrapped.begin(), wrapped.end());
+    }
+
+    for (int row = 0; row < h; ++row) {
+        fillLine(x, y + row, w, L' ', ATTR_NORMAL);
+        if (row < static_cast<int>(wrappedLines.size())) {
+            writeAtColor(x, y + row, padOrTrimText(wrappedLines[row], w), attr);
+        }
+    }
+}
+
+static FooterHintRegion getDefaultFooterHintRegion() {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(g_hOut, &csbi);
+    return {1, std::max(1, static_cast<int>(csbi.dwSize.Y) - 2), csbi.dwSize.X - 2};
+}
+
+void setFooterHintRegion(int x, int y, int w) {
+    g_footerHintRegion = {x, y, w};
+}
+
+void resetFooterHintRegion() {
+    g_footerHintRegion = getDefaultFooterHintRegion();
+}
+
+void clearFooterHintLine() {
+    FooterHintRegion region = g_footerHintRegion;
+    if (region.w <= 0) region = getDefaultFooterHintRegion();
+    fillLine(region.x, region.y, region.w, L' ', ATTR_NORMAL);
+}
+
+void writeFooterHint(const std::wstring& text, WORD attr) {
+    FooterHintRegion region = g_footerHintRegion;
+    if (region.w <= 0) region = getDefaultFooterHintRegion();
+    fillLine(region.x, region.y, region.w, L' ', ATTR_NORMAL);
+    writeAtColor(region.x + 2, region.y, fitTextToWidth(text, std::max(1, region.w - 4)), attr);
+}
+
+void pauseScreen() {
+    FlushConsoleInputBuffer(g_hIn);
+    writeFooterHint(L"按任意键继续...", AMBER);
+    DWORD oldMode;
+    GetConsoleMode(g_hIn, &oldMode);
+    SetConsoleMode(g_hIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT);
+    while (true) {
+        INPUT_RECORD ir;
+        DWORD read;
+        if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) break;
+    }
+    SetConsoleMode(g_hIn, oldMode);
+    clearFooterHintLine();
 }
 
 bool waitForConsoleInputOrResize(HANDLE hIn, int& outScreenW, int& outScreenH, DWORD timeoutMs, DWORD settleMs) {
@@ -444,6 +631,140 @@ int menuSelectInRegion(int x, int y, int w, int h,
                     return si[selPos];
                 }
             }
+        }
+    }
+}
+
+int menuSelectScrollableInRegion(int x, int y, int w, int h,
+                                 const std::vector<MenuItem>& items,
+                                 int startIdx) {
+    std::vector<int> selectableIndices;
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        if (items[i].selectable) selectableIndices.push_back(i);
+    }
+    if (selectableIndices.empty() || h <= 0 || w <= 0) return -1;
+
+    int selPos = 0;
+    for (int i = 0; i < static_cast<int>(selectableIndices.size()); ++i) {
+        if (selectableIndices[i] == startIdx) {
+            selPos = i;
+            break;
+        }
+    }
+
+    ConsoleViewport view = getConsoleViewport();
+    int watchW = view.w;
+    int watchH = view.h;
+    int visibleCount = std::max(1, h);
+    int topItemIdx = std::max(0, selectableIndices[selPos] - visibleCount + 1);
+    int maxTop = std::max(0, static_cast<int>(items.size()) - visibleCount);
+    if (topItemIdx > maxTop) topItemIdx = maxTop;
+
+    CONSOLE_CURSOR_INFO oldCursorInfo{};
+    GetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+    CONSOLE_CURSOR_INFO hiddenCursor = oldCursorInfo;
+    hiddenCursor.bVisible = FALSE;
+    SetConsoleCursorInfo(g_hOut, &hiddenCursor);
+
+    auto drawLine = [&](int row, int itemIdx, bool highlight) {
+        fillLine(x, y + row, w, L' ', ATTR_NORMAL);
+        std::wstring text = (highlight ? L"> " : L"  ") + items[itemIdx].text;
+        writeAtColor(x, y + row, padOrTrimText(text, w), highlight ? 0x70 : AMBER);
+    };
+
+    auto fullRender = [&]() {
+        for (int row = 0; row < visibleCount; ++row) {
+            int itemIdx = topItemIdx + row;
+            fillLine(x, y + row, w, L' ', ATTR_NORMAL);
+            if (itemIdx >= static_cast<int>(items.size())) continue;
+            drawLine(row, itemIdx, itemIdx == selectableIndices[selPos]);
+        }
+    };
+
+    auto ensureVisible = [&]() {
+        int selectedItemIdx = selectableIndices[selPos];
+        if (selectedItemIdx < topItemIdx) {
+            topItemIdx = selectedItemIdx;
+        } else if (selectedItemIdx >= topItemIdx + visibleCount) {
+            topItemIdx = selectedItemIdx - visibleCount + 1;
+        }
+        int localMaxTop = std::max(0, static_cast<int>(items.size()) - visibleCount);
+        if (topItemIdx < 0) topItemIdx = 0;
+        if (topItemIdx > localMaxTop) topItemIdx = localMaxTop;
+    };
+
+    fullRender();
+    while (true) {
+        if (!waitForConsoleInputOrResize(g_hIn, watchW, watchH)) {
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+            return MENU_RESIZE;
+        }
+
+        INPUT_RECORD ir{};
+        DWORD read = 0;
+        if (!ReadConsoleInputW(g_hIn, &ir, 1, &read) || read == 0) continue;
+        if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
+
+        WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+        WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
+        int oldSelPos = selPos;
+        int oldTop = topItemIdx;
+
+        if (vk == VK_UP) {
+            selPos = (selPos - 1 + static_cast<int>(selectableIndices.size())) % static_cast<int>(selectableIndices.size());
+            ensureVisible();
+        } else if (vk == VK_DOWN) {
+            selPos = (selPos + 1) % static_cast<int>(selectableIndices.size());
+            ensureVisible();
+        } else if (vk == VK_PRIOR) {
+            selPos -= std::max(1, visibleCount - 1);
+            if (selPos < 0) selPos = 0;
+            ensureVisible();
+        } else if (vk == VK_NEXT) {
+            selPos += std::max(1, visibleCount - 1);
+            if (selPos >= static_cast<int>(selectableIndices.size())) selPos = static_cast<int>(selectableIndices.size()) - 1;
+            ensureVisible();
+        } else if (vk == VK_HOME) {
+            selPos = 0;
+            ensureVisible();
+        } else if (vk == VK_END) {
+            selPos = static_cast<int>(selectableIndices.size()) - 1;
+            ensureVisible();
+        } else if (vk == VK_RETURN) {
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+            return selectableIndices[selPos];
+        } else if (vk == VK_ESCAPE) {
+            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+            return MENU_ESC;
+        } else if (ch >= L'0' && ch <= L'9') {
+            for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+                if (!items[i].selectable) continue;
+                std::wstring t = items[i].text;
+                size_t pos = t.find_first_not_of(L" ");
+                if (pos != std::wstring::npos && t[pos] == static_cast<wchar_t>(ch) &&
+                    pos + 1 < t.size() && (t[pos + 1] == L'.' || t[pos + 1] == L' ')) {
+                    for (int j = 0; j < static_cast<int>(selectableIndices.size()); ++j) {
+                        if (selectableIndices[j] == i) {
+                            selPos = j;
+                            ensureVisible();
+                            SetConsoleCursorInfo(g_hOut, &oldCursorInfo);
+                            return selectableIndices[selPos];
+                        }
+                    }
+                }
+            }
+            continue;
+        } else {
+            continue;
+        }
+
+        if (oldTop != topItemIdx) {
+            fullRender();
+        } else if (oldSelPos != selPos) {
+            int oldRow = selectableIndices[oldSelPos] - topItemIdx;
+            int newRow = selectableIndices[selPos] - topItemIdx;
+            if (oldRow >= 0 && oldRow < visibleCount) drawLine(oldRow, selectableIndices[oldSelPos], false);
+            if (newRow >= 0 && newRow < visibleCount) drawLine(newRow, selectableIndices[selPos], true);
         }
     }
 }
