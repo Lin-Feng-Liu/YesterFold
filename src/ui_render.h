@@ -91,6 +91,7 @@ void drawDiaryTitle(int x, int y);
 void drawLargeDigits(int x, int y, const std::wstring& text,
                      WORD attr = AMBER, WORD shadowAttr = AMBER_DIM);
 int measureLargeDigits(const std::wstring& text);
+int measureLargeDigitsInkWidth(const std::wstring& text);
 int largeDigitsHeight();
 void drawHeatmapCell(int x, int y, int level);
 ConsoleViewport getConsoleViewport();

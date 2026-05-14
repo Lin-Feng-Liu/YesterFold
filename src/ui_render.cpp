@@ -265,22 +265,24 @@ namespace {
 struct LargeDigitGlyph {
     const wchar_t* lines[6];
     int width;
+    int inkLeft;
+    int inkRight;
 };
 
 const LargeDigitGlyph& getLargeDigitGlyph(wchar_t ch) {
     static const LargeDigitGlyph digits[] = {
-        {{L" ██████╗ ", L"██╔═████╗", L"██║██╔██║", L"██║██║██║", L"██████╔╝", L"╚═════╝ "}, 9},
-        {{L" ██╗ ",     L"███║ ",     L"╚██║ ",     L" ██║ ",     L" ██║ ",     L" ╚═╝ "}, 5},
-        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L"██╔═══╝ ", L"███████╗", L"╚══════╝"}, 8},
-        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L" ╚═══██╗", L"██████╔╝", L"╚═════╝ "}, 8},
-        {{L"██╗  ██╗", L"██║  ██║", L"███████║", L"╚════██║", L"     ██║", L"     ╚═╝"}, 8},
-        {{L"███████╗", L"██╔════╝", L"██████╗ ", L"╚════██╗", L"██████╔╝", L"╚═════╝ "}, 8},
-        {{L" ██████╗", L"██╔════╝", L"██████╗ ", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8},
-        {{L"███████╗", L"╚════██║", L"   ██╔╝ ", L"  ██╔╝  ", L"  ██║   ", L"  ╚═╝   "}, 8},
-        {{L" █████╗ ", L"██╔══██╗", L"╚█████╔╝", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8},
-        {{L" █████╗ ", L"██╔══██╗", L"╚██████║", L" ╚═══██║", L" █████╔╝", L" ╚════╝ "}, 8},
+        {{L" ██████╗ ", L"██╔═████╗", L"██║██╔██║", L"██║██║██║", L"██████╔╝", L" ╚════╝ "}, 9, 1, 7},
+        {{L" ██╗ ",     L"███║ ",     L"╚██║ ",     L" ██║ ",     L" ██║ ",     L" ╚═╝ "}, 5, 1, 3},
+        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L"██╔═══╝ ", L"███████╗", L"╚══════╝"}, 8, 0, 7},
+        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L" ╚═══██╗", L"██████╔╝", L"╚═════╝ "}, 8, 0, 7},
+        {{L"██╗  ██╗", L"██║  ██║", L"███████║", L"╚════██║", L"     ██║", L"     ╚═╝"}, 8, 0, 7},
+        {{L"███████╗", L"██╔════╝", L"██████╗ ", L"╚════██╗", L"██████╔╝", L"╚═════╝ "}, 8, 0, 7},
+        {{L" ██████╗", L"██╔════╝", L"██████╗ ", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8, 0, 7},
+        {{L"███████╗", L"╚════██║", L"   ██╔╝ ", L"  ██╔╝  ", L"  ██║   ", L"  ╚═╝   "}, 8, 0, 7},
+        {{L" █████╗ ", L"██╔══██╗", L"╚█████╔╝", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8, 0, 7},
+        {{L" █████╗ ", L"██╔══██╗", L"╚██████║", L" ╚═══██║", L" █████╔╝", L" ╚════╝ "}, 8, 0, 7},
     };
-    static const LargeDigitGlyph fallback = {{L"?????", L"?????", L"?????", L"?????", L"?????", L"?????"}, 5};
+    static const LargeDigitGlyph fallback = {{L"?????", L"?????", L"?????", L"?????", L"?????", L"?????"}, 5, 0, 4};
     if (ch >= L'0' && ch <= L'9') return digits[ch - L'0'];
     return fallback;
 }
@@ -310,6 +312,32 @@ int measureLargeDigits(const std::wstring& text) {
         first = false;
     }
     return total;
+}
+
+int measureLargeDigitsInkWidth(const std::wstring& text) {
+    if (text.empty()) return 0;
+
+    int cursorX = 0;
+    int minX = 0;
+    int maxX = 0;
+    bool hasInk = false;
+
+    for (wchar_t ch : text) {
+        const LargeDigitGlyph& glyph = getLargeDigitGlyph(ch);
+        int glyphMinX = cursorX + glyph.inkLeft;
+        int glyphMaxX = cursorX + glyph.inkRight;
+        if (!hasInk) {
+            minX = glyphMinX;
+            maxX = glyphMaxX;
+            hasInk = true;
+        } else {
+            if (glyphMinX < minX) minX = glyphMinX;
+            if (glyphMaxX > maxX) maxX = glyphMaxX;
+        }
+        cursorX += glyph.width + 2;
+    }
+
+    return hasInk ? (maxX - minX + 1) : 0;
 }
 
 int largeDigitsHeight() {

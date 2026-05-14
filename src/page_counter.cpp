@@ -100,11 +100,12 @@ void counterPage(DiaryStore& store, const std::string& password, const char* dia
         writeAtColor(rightX + 2, topY - 1, L"[ RECENT_PULSES ]", AMBER_DIM);
         writeAtColor(leftX + 2, menuY - 1, L"[ OPERATIONS ]", AMBER_DIM);
 
-        writeAtColor(leftX + 2, topY + 2, L"当前计数", AMBER_DIM);
+        writeAtColor(leftX + 2, topY + 1, L"当前计数", AMBER_DIM);
         std::wstring countText = std::to_wstring(count);
-        int digitW = measureLargeDigits(countText);
-        int digitX = leftX + std::max(2, (leftW - digitW) / 2);
-        int digitY = topY + 5;
+        int digitInkW = measureLargeDigitsInkWidth(countText);
+        const int digitLeftPadding = 1;
+        int digitX = leftX + digitLeftPadding + std::max(0, ((leftW - 2) - digitInkW) / 2);
+        int digitY = topY + 4;
         drawLargeDigits(digitX, digitY, countText, AMBER, AMBER_DIM);
 
         std::vector<std::wstring> infoLines = buildCounterHistoryLines(history, count);
