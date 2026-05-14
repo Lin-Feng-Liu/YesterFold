@@ -2,6 +2,7 @@
 
 #include "diary_store.h"
 #include "page_status.h"
+#include "time_utils.h"
 #include "ui_render.h"
 
 #include <algorithm>
@@ -9,15 +10,6 @@
 #include <windows.h>
 
 namespace {
-
-std::string getCurrentTimestampStr() {
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%04d/%02d/%02d %02d:%02d:%02d",
-             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-    return std::string(buf);
-}
 
 InputResult readLineCancelable(const std::string& prompt, bool allowEmpty = false) {
     DWORD oldMode;
@@ -110,8 +102,10 @@ void counterPage(DiaryStore& store, const std::string& password, const char* dia
 
         writeAtColor(leftX + 2, topY + 2, L"当前计数", AMBER_DIM);
         std::wstring countText = std::to_wstring(count);
-        int countX = leftX + std::max(2, (leftW - static_cast<int>(countText.size())) / 2);
-        writeAtColor(countX, topY + 6, countText, 0x0F);
+        int digitW = measureLargeDigits(countText);
+        int digitX = leftX + std::max(2, (leftW - digitW) / 2);
+        int digitY = topY + 5;
+        drawLargeDigits(digitX, digitY, countText, AMBER, AMBER_DIM);
 
         std::vector<std::wstring> infoLines = buildCounterHistoryLines(history, count);
         writeWrappedPanelLines(rightX + 2, topY + 1, rightW - 4, heroH - 2, infoLines, AMBER);

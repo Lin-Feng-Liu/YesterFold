@@ -27,28 +27,7 @@ static const int MODE_SWITCH = 1;
 
 static void mainLoop(DiaryStore& store, const std::string& password) {
     while (true) {
-        DiaryMetrics m = computeMetrics(store);
-        MainPageLayout layout = renderMainPage(m, DIARY_PATH);
-
-        std::vector<MenuItem> menuItems = {
-            {L"1. 写入 / 编辑今日", true},
-            {L"2. 查看全部", true},
-            {L"3. 按日期编辑", true},
-            {L"4. 导出 / 导入", true},
-            {L"5. 修改密码", true},
-            {L"6. 神秘计数器", true},
-            {L"7. 保存并退出", true},
-        };
-
-        int choice = menuSelectInRegion(
-            layout.menuX, layout.menuY,
-            layout.menuW, layout.menuH,
-            menuItems, 0);
-
-        if (choice == MENU_RESIZE) {
-            continue;
-        }
-
+        int choice = selectMainPage(store, DIARY_PATH);
         if (choice == MENU_ESC) {
             continue;
         }
@@ -149,7 +128,7 @@ int main() {
 
     g_hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     g_hIn  = GetStdHandle(STD_INPUT_HANDLE);
-    g_startTick = GetTickCount();
+    g_startTick = static_cast<ULONGLONG>(GetTickCount());
 
     if (!crypto::init()) {
         std::cerr << "加密库初始化失败!" << std::endl;

@@ -260,6 +260,62 @@ void drawDiaryTitle(int x, int y) {
     resetAttr();
 }
 
+namespace {
+
+struct LargeDigitGlyph {
+    const wchar_t* lines[6];
+    int width;
+};
+
+const LargeDigitGlyph& getLargeDigitGlyph(wchar_t ch) {
+    static const LargeDigitGlyph digits[] = {
+        {{L" ██████╗ ", L"██╔═████╗", L"██║██╔██║", L"██║██║██║", L"██████╔╝", L"╚═════╝ "}, 9},
+        {{L" ██╗ ",     L"███║ ",     L"╚██║ ",     L" ██║ ",     L" ██║ ",     L" ╚═╝ "}, 5},
+        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L"██╔═══╝ ", L"███████╗", L"╚══════╝"}, 8},
+        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L" ╚═══██╗", L"██████╔╝", L"╚═════╝ "}, 8},
+        {{L"██╗  ██╗", L"██║  ██║", L"███████║", L"╚════██║", L"     ██║", L"     ╚═╝"}, 8},
+        {{L"███████╗", L"██╔════╝", L"██████╗ ", L"╚════██╗", L"██████╔╝", L"╚═════╝ "}, 8},
+        {{L" ██████╗", L"██╔════╝", L"██████╗ ", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8},
+        {{L"███████╗", L"╚════██║", L"   ██╔╝ ", L"  ██╔╝  ", L"  ██║   ", L"  ╚═╝   "}, 8},
+        {{L" █████╗ ", L"██╔══██╗", L"╚█████╔╝", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8},
+        {{L" █████╗ ", L"██╔══██╗", L"╚██████║", L" ╚═══██║", L" █████╔╝", L" ╚════╝ "}, 8},
+    };
+    static const LargeDigitGlyph fallback = {{L"?????", L"?????", L"?????", L"?????", L"?????", L"?????"}, 5};
+    if (ch >= L'0' && ch <= L'9') return digits[ch - L'0'];
+    return fallback;
+}
+
+}
+
+void drawLargeDigits(int x, int y, const std::wstring& text, WORD attr, WORD shadowAttr) {
+    (void)shadowAttr;
+    int cursorX = x;
+    for (wchar_t ch : text) {
+        const LargeDigitGlyph& glyph = getLargeDigitGlyph(ch);
+        for (int row = 0; row < 6; ++row) {
+            writeAtColor(cursorX, y + row, glyph.lines[row], attr);
+        }
+        cursorX += glyph.width + 2;
+    }
+}
+
+int measureLargeDigits(const std::wstring& text) {
+    if (text.empty()) return 0;
+    int total = 0;
+    bool first = true;
+    for (wchar_t ch : text) {
+        const LargeDigitGlyph& glyph = getLargeDigitGlyph(ch);
+        if (!first) total += 2;
+        total += glyph.width;
+        first = false;
+    }
+    return total;
+}
+
+int largeDigitsHeight() {
+    return 6;
+}
+
 // ─── 热力图 cell ───
 
 void drawHeatmapCell(int x, int y, int level) {

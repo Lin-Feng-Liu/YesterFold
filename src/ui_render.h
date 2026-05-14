@@ -88,6 +88,10 @@ void drawDoubleBox(int x, int y, int w, int h);
 void drawSingleBox(int x, int y, int w, int h);
 void drawProgressBar(int x, int y, int barWidth, double percent);
 void drawDiaryTitle(int x, int y);
+void drawLargeDigits(int x, int y, const std::wstring& text,
+                     WORD attr = AMBER, WORD shadowAttr = AMBER_DIM);
+int measureLargeDigits(const std::wstring& text);
+int largeDigitsHeight();
 void drawHeatmapCell(int x, int y, int level);
 ConsoleViewport getConsoleViewport();
 CenteredRect getCenteredRect(int screenW, int screenH, int desiredW, int desiredH, int minW = 88, int minH = 12);
