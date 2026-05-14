@@ -265,24 +265,47 @@ namespace {
 struct LargeDigitGlyph {
     const wchar_t* lines[6];
     int width;
-    int inkLeft;
-    int inkRight;
 };
+
+struct InkBounds {
+    int left;
+    int right;
+    bool hasInk;
+};
+
+InkBounds computeGlyphInkBounds(const LargeDigitGlyph& glyph) {
+    InkBounds bounds{0, 0, false};
+    for (int row = 0; row < 6; ++row) {
+        std::wstring line = glyph.lines[row];
+        for (int col = 0; col < static_cast<int>(line.size()); ++col) {
+            if (line[col] == L' ') continue;
+            if (!bounds.hasInk) {
+                bounds.left = col;
+                bounds.right = col;
+                bounds.hasInk = true;
+            } else {
+                if (col < bounds.left) bounds.left = col;
+                if (col > bounds.right) bounds.right = col;
+            }
+        }
+    }
+    return bounds;
+}
 
 const LargeDigitGlyph& getLargeDigitGlyph(wchar_t ch) {
     static const LargeDigitGlyph digits[] = {
-        {{L" ██████╗ ", L"██╔═████╗", L"██║██╔██║", L"██║██║██║", L"██████╔╝", L" ╚════╝ "}, 9, 1, 7},
-        {{L" ██╗ ",     L"███║ ",     L"╚██║ ",     L" ██║ ",     L" ██║ ",     L" ╚═╝ "}, 5, 1, 3},
-        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L"██╔═══╝ ", L"███████╗", L"╚══════╝"}, 8, 0, 7},
-        {{L"██████╗ ", L"╚════██╗", L" █████╔╝", L" ╚═══██╗", L"██████╔╝", L"╚═════╝ "}, 8, 0, 7},
-        {{L"██╗  ██╗", L"██║  ██║", L"███████║", L"╚════██║", L"     ██║", L"     ╚═╝"}, 8, 0, 7},
-        {{L"███████╗", L"██╔════╝", L"██████╗ ", L"╚════██╗", L"██████╔╝", L"╚═════╝ "}, 8, 0, 7},
-        {{L" ██████╗", L"██╔════╝", L"██████╗ ", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8, 0, 7},
-        {{L"███████╗", L"╚════██║", L"   ██╔╝ ", L"  ██╔╝  ", L"  ██║   ", L"  ╚═╝   "}, 8, 0, 7},
-        {{L" █████╗ ", L"██╔══██╗", L"╚█████╔╝", L"██╔══██╗", L"╚█████╔╝", L" ╚════╝ "}, 8, 0, 7},
-        {{L" █████╗ ", L"██╔══██╗", L"╚██████║", L" ╚═══██║", L" █████╔╝", L" ╚════╝ "}, 8, 0, 7},
+        {{L" ██████╗  ", L"██╔═══██╗ ", L"██║   ██║ ", L"██║   ██║ ", L"╚██████╔╝ ", L" ╚═════╝  "}, 10},
+        {{L" ██╗ ",      L"███║ ",      L"╚██║ ",      L" ██║ ",      L" ██║ ",      L" ╚═╝ "}, 5},
+        {{L"██████╗ ",  L"╚════██╗",  L" █████╔╝",  L"██╔═══╝ ",  L"███████╗",  L"╚══════╝"}, 8},
+        {{L"██████╗ ",  L"╚════██╗",  L" █████╔╝",  L" ╚═══██╗",  L"██████╔╝",  L"╚═════╝ "}, 8},
+        {{L"██╗  ██╗",  L"██║  ██║",  L"███████║",  L"╚════██║",  L"     ██║",  L"     ╚═╝"}, 8},
+        {{L"███████╗",  L"██╔════╝",  L"██████╗ ",  L"╚════██╗",  L"██████╔╝",  L"╚═════╝ "}, 8},
+        {{L" ██████╗",  L"██╔════╝",  L"██████╗ ",  L"██╔══██╗",  L"╚█████╔╝",  L" ╚════╝ "}, 8},
+        {{L"███████╗",  L"╚════██║",  L"   ██╔╝ ",  L"  ██╔╝  ",  L"  ██║   ",  L"  ╚═╝   "}, 8},
+        {{L" █████╗ ",  L"██╔══██╗",  L"╚█████╔╝",  L"██╔══██╗",  L"╚█████╔╝",  L" ╚════╝ "}, 8},
+        {{L" █████╗ ",  L"██╔══██╗",  L"╚██████║",  L" ╚═══██║",  L" █████╔╝",  L" ╚════╝ "}, 8},
     };
-    static const LargeDigitGlyph fallback = {{L"?????", L"?????", L"?????", L"?????", L"?????", L"?????"}, 5, 0, 4};
+    static const LargeDigitGlyph fallback = {{L"?????", L"?????", L"?????", L"?????", L"?????", L"?????"}, 5};
     if (ch >= L'0' && ch <= L'9') return digits[ch - L'0'];
     return fallback;
 }
@@ -294,10 +317,18 @@ void drawLargeDigits(int x, int y, const std::wstring& text, WORD attr, WORD sha
     int cursorX = x;
     for (wchar_t ch : text) {
         const LargeDigitGlyph& glyph = getLargeDigitGlyph(ch);
+        InkBounds bounds = computeGlyphInkBounds(glyph);
+        int inkWidth = bounds.hasInk ? (bounds.right - bounds.left + 1) : glyph.width;
         for (int row = 0; row < 6; ++row) {
-            writeAtColor(cursorX, y + row, glyph.lines[row], attr);
+            std::wstring line = glyph.lines[row];
+            if (bounds.hasInk && static_cast<int>(line.size()) > bounds.left) {
+                int take = std::min(inkWidth, static_cast<int>(line.size()) - bounds.left);
+                writeAtColor(cursorX, y + row, line.substr(bounds.left, take), attr);
+            } else {
+                writeAtColor(cursorX, y + row, line, attr);
+            }
         }
-        cursorX += glyph.width + 2;
+        cursorX += inkWidth + 2;
     }
 }
 
@@ -324,17 +355,19 @@ int measureLargeDigitsInkWidth(const std::wstring& text) {
 
     for (wchar_t ch : text) {
         const LargeDigitGlyph& glyph = getLargeDigitGlyph(ch);
-        int glyphMinX = cursorX + glyph.inkLeft;
-        int glyphMaxX = cursorX + glyph.inkRight;
+        InkBounds bounds = computeGlyphInkBounds(glyph);
+        int inkWidth = bounds.hasInk ? (bounds.right - bounds.left + 1) : glyph.width;
+        int glyphMinX = cursorX;
+        int glyphMaxX = cursorX + inkWidth - 1;
         if (!hasInk) {
             minX = glyphMinX;
             maxX = glyphMaxX;
             hasInk = true;
         } else {
             if (glyphMinX < minX) minX = glyphMinX;
-            if (glyphMaxX > maxX) maxX = glyphMaxX;
+                if (glyphMaxX > maxX) maxX = glyphMaxX;
         }
-        cursorX += glyph.width + 2;
+        cursorX += inkWidth + 2;
     }
 
     return hasInk ? (maxX - minX + 1) : 0;
