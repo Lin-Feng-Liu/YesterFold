@@ -28,8 +28,9 @@ public:
     int getCounter() const;
     void setCounter(int value);
     std::vector<std::string> getCounterHistory() const;
-    void pushCounterHistory(const std::string& timestamp, size_t maxCount = 6);
+    void pushCounterHistory(const std::string& timestamp, size_t maxCount = 0);
     void trimCounterHistoryTail(size_t removeCount);
+    bool removeCounterHistoryAt(size_t index);
 
     // 返回按日期排序的条目索引
     std::vector<size_t> getSortedIndices() const;

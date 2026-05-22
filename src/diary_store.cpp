@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <cstddef>
 
 bool DiaryStore::load(const std::string& filePath, const std::string& password) {
     loaded_ = false;
@@ -131,8 +132,10 @@ void DiaryStore::pushCounterHistory(const std::string& timestamp, size_t maxCoun
 
     auto& history = data_["counter_history"];
     history.push_back(timestamp);
-    while (history.size() > maxCount) {
-        history.erase(history.begin());
+    if (maxCount > 0) {
+        while (history.size() > maxCount) {
+            history.erase(history.begin());
+        }
     }
 }
 
@@ -145,4 +148,12 @@ void DiaryStore::trimCounterHistoryTail(size_t removeCount) {
         history.erase(history.end() - 1);
         --removeCount;
     }
+}
+
+bool DiaryStore::removeCounterHistoryAt(size_t index) {
+    if (!data_.contains("counter_history") || !data_["counter_history"].is_array()) return false;
+    auto& history = data_["counter_history"];
+    if (index >= history.size()) return false;
+    history.erase(history.begin() + static_cast<std::ptrdiff_t>(index));
+    return true;
 }

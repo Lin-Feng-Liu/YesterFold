@@ -2,6 +2,7 @@
 
 #include "diary_store.h"
 #include "page_status.h"
+#include "page_counter_history.h"
 #include "time_utils.h"
 #include "ui_render.h"
 
@@ -119,12 +120,13 @@ void counterPage(DiaryStore& store, const std::string& password, const char* dia
         std::vector<MenuItem> items = {
             {L"1. 次数加一", true},
             {L"2. 手动设置次数", true},
+            {L"3. 整体历史回望", true},
             {L"0. 返回", true},
         };
 
         int choice = menuSelectInRegion(leftX + 2, menuY + 1, shell.w - 16, menuH - 2, items, 0);
 
-        if (choice == MENU_ESC || choice == 2) break;
+        if (choice == MENU_ESC || choice == 3) break;
         if (choice == MENU_RESIZE) continue;
 
         if (choice == 0) {
@@ -161,6 +163,9 @@ void counterPage(DiaryStore& store, const std::string& password, const char* dia
             store.save(diaryPath, password);
             showFullScreenMessage(L"COUNTER UPDATED", {L"[计数器已更新]"});
             pauseScreen();
+        } else if (choice == 2) {
+            clearScreen();
+            browseCounterHistory(store, password, diaryPath);
         }
     }
 }
