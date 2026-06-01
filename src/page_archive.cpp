@@ -4,6 +4,7 @@
 #include "ui_render.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,72 @@ void viewAllDiaries(const DiaryStore& store) {
     std::vector<std::wstring> wrappedLines;
     std::vector<RenderedLine> prevBodyFrame;
     bool bodyFrameInit = false;
+    std::wstring searchQuery;
+    std::wstring searchDraft;
+    std::vector<int> matches;
+    int activeMatch = -1;
+    bool searchMode = false;
+    bool searchDraftSelected = false;
+
+    auto toSearchKey = [](const std::wstring& text) {
+        std::wstring key;
+        key.reserve(text.size());
+        for (wchar_t ch : text) {
+            key.push_back(static_cast<wchar_t>(std::towlower(ch)));
+        }
+        return key;
+    };
+
+    auto rebuildMatches = [&]() {
+        matches.clear();
+        if (searchQuery.empty()) {
+            activeMatch = -1;
+            return;
+        }
+
+        std::wstring needle = toSearchKey(searchQuery);
+        for (int i = 0; i < static_cast<int>(wrappedLines.size()); ++i) {
+            if (toSearchKey(wrappedLines[i]).find(needle) != std::wstring::npos) {
+                matches.push_back(i);
+            }
+        }
+
+        if (matches.empty()) {
+            activeMatch = -1;
+        } else if (activeMatch < 0) {
+            activeMatch = 0;
+        } else if (activeMatch >= static_cast<int>(matches.size())) {
+            activeMatch = static_cast<int>(matches.size()) - 1;
+        }
+    };
+
+    auto centerOnActiveMatch = [&]() {
+        if (activeMatch < 0 || activeMatch >= static_cast<int>(matches.size())) return;
+        int targetLine = matches[activeMatch];
+        int total = static_cast<int>(wrappedLines.size());
+        int maxScroll = std::max(0, total - layout.bodyH);
+        int desired = targetLine - std::max(0, layout.bodyH / 2);
+        if (desired < 0) desired = 0;
+        if (desired > maxScroll) desired = maxScroll;
+        scroll = desired;
+    };
+
+    auto jumpToMatch = [&](int delta) {
+        if (searchQuery.empty()) return false;
+        rebuildMatches();
+        if (matches.empty()) return false;
+
+        if (activeMatch < 0 || activeMatch >= static_cast<int>(matches.size())) {
+            activeMatch = 0;
+        } else if (delta != 0) {
+            int count = static_cast<int>(matches.size());
+            activeMatch = (activeMatch + delta) % count;
+            if (activeMatch < 0) activeMatch += count;
+        }
+
+        centerOnActiveMatch();
+        return true;
+    };
 
     auto paintRenderedFrame = [&](int x, int y, int width,
                                   const std::vector<RenderedLine>& nextFrame,
@@ -100,6 +167,7 @@ void viewAllDiaries(const DiaryStore& store) {
             wrappedLines.insert(wrappedLines.end(), wrapped.begin(), wrapped.end());
         }
         if (wrappedLines.empty()) wrappedLines.push_back(L"");
+        rebuildMatches();
     };
 
     auto renderShell = [&]() {
@@ -161,6 +229,11 @@ void viewAllDiaries(const DiaryStore& store) {
             } else if (std::count(line.begin(), line.end(), L'/') == 2 && line.find(L' ') == std::wstring::npos) {
                 attr = 0x0F;
             }
+            if (activeMatch >= 0 &&
+                activeMatch < static_cast<int>(matches.size()) &&
+                lineIdx == matches[activeMatch]) {
+                attr = 0x70;
+            }
 
             nextFrame[i].text = line;
             nextFrame[i].attr = attr;
@@ -174,13 +247,26 @@ void viewAllDiaries(const DiaryStore& store) {
                             L"-" + std::to_wstring(visibleEnd) +
                             L" / " + std::to_wstring(total) +
                             L"    ENTRIES " + std::to_wstring(sorted.size());
-        std::wstring controls = L"PgUp/PgDn翻页  Up/Down滚动  Home/End首尾  Esc返回";
+        if (!searchQuery.empty()) {
+            if (matches.empty()) {
+                info += L"    NO MATCH: \"" + searchQuery + L"\"";
+            } else {
+                info += L"    SEARCH \"" + searchQuery + L"\"  " +
+                        std::to_wstring(activeMatch + 1) + L" / " +
+                        std::to_wstring(matches.size());
+            }
+        }
+        std::wstring controls = L"Ctrl+F搜索  Ctrl+A上一条  Ctrl+E下一条  PgUp/PgDn翻页  Up/Down滚动  Home/End首尾  Esc返回";
         fillLine(1, layout.infoY, screenW - 2, L' ', ATTR_NORMAL);
         fillLine(1, layout.promptY, screenW - 2, L' ', ATTR_NORMAL);
         fillLine(1, layout.statusY, screenW - 2, L' ', ATTR_NORMAL);
         writeAtColor(3, layout.infoY, fitTextToWidth(info, screenW - 6), AMBER_DIM);
         writeAtColor(3, layout.promptY, fitTextToWidth(controls, screenW - 6), AMBER_DIM);
-        writeAtColor(3, layout.statusY, L">> ARCHIVE READY", AMBER);
+        if (searchMode) {
+            writeAtColor(3, layout.statusY, fitTextToWidth(L"SEARCH: " + searchDraft, screenW - 6), 0x70);
+        } else {
+            writeAtColor(3, layout.statusY, L">> ARCHIVE READY", AMBER);
+        }
     };
 
     renderShell();
@@ -189,7 +275,21 @@ void viewAllDiaries(const DiaryStore& store) {
 
     while (true) {
         if (!waitForConsoleInputOrResize(g_hIn, screenW, screenH)) {
+            int oldActiveMatch = activeMatch;
             renderShell();
+            if (!searchQuery.empty()) {
+                rebuildMatches();
+                if (matches.empty()) {
+                    activeMatch = -1;
+                } else if (oldActiveMatch < 0) {
+                    activeMatch = 0;
+                } else if (oldActiveMatch >= static_cast<int>(matches.size())) {
+                    activeMatch = static_cast<int>(matches.size()) - 1;
+                } else {
+                    activeMatch = oldActiveMatch;
+                }
+                centerOnActiveMatch();
+            }
             renderArchive();
             continue;
         }
@@ -200,7 +300,82 @@ void viewAllDiaries(const DiaryStore& store) {
         if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
 
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+        DWORD ctrl = ir.Event.KeyEvent.dwControlKeyState;
+        WCHAR ch = ir.Event.KeyEvent.uChar.UnicodeChar;
         bool changed = false;
+
+        bool ctrlPressed = (ctrl & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+        if (searchMode) {
+            if (vk == VK_ESCAPE) {
+                searchMode = false;
+                searchDraft = searchQuery;
+                searchDraftSelected = false;
+                changed = true;
+            } else if (vk == VK_BACK) {
+                if (searchDraftSelected) {
+                    searchDraft.clear();
+                    searchDraftSelected = false;
+                    changed = true;
+                    if (changed) renderArchive();
+                    continue;
+                }
+                if (!searchDraft.empty()) {
+                    searchDraft.pop_back();
+                }
+                changed = true;
+            } else if (vk == VK_RETURN) {
+                if (searchDraft.empty()) {
+                    searchQuery.clear();
+                    matches.clear();
+                    activeMatch = -1;
+                } else if (searchDraft == searchQuery && !matches.empty()) {
+                    jumpToMatch(1);
+                } else {
+                    searchQuery = searchDraft;
+                    activeMatch = -1;
+                    jumpToMatch(0);
+                }
+                searchMode = false;
+                searchDraftSelected = false;
+                changed = true;
+            } else if (ch >= L' ') {
+                if (searchDraftSelected) {
+                    searchDraft.clear();
+                    searchDraftSelected = false;
+                }
+                searchDraft.push_back(ch);
+                changed = true;
+            }
+
+            if (changed) renderArchive();
+            continue;
+        }
+
+        if (ctrlPressed && vk == L'F') {
+            searchMode = true;
+            searchDraft = searchQuery;
+            searchDraftSelected = !searchDraft.empty();
+            renderArchive();
+            continue;
+        }
+
+        if (vk == VK_RETURN && !searchQuery.empty()) {
+            changed = jumpToMatch(1);
+            if (changed) renderArchive();
+            continue;
+        }
+
+        if (ctrlPressed && vk == L'A') {
+            changed = jumpToMatch(-1);
+            if (changed) renderArchive();
+            continue;
+        }
+
+        if (ctrlPressed && vk == L'E') {
+            changed = jumpToMatch(1);
+            if (changed) renderArchive();
+            continue;
+        }
 
         if (vk == VK_ESCAPE) {
             break;
