@@ -33,7 +33,9 @@ static int entryTotalChars(const nlohmann::json& entry) {
     int total = 0;
     for (const auto& seg : entry["segments"]) {
         std::string content = seg.value("content", "");
-        total += static_cast<int>(content.size());
+        for (unsigned char c : content) {
+            if ((c & 0xC0) != 0x80) total++;
+        }
     }
     return total;
 }
