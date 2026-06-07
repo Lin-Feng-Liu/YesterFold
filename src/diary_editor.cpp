@@ -27,6 +27,12 @@ struct LineInfo {
     int displayLen;
 };
 
+enum class ConfirmMode {
+    None,
+    Save,
+    Exit
+};
+
 EditorShellLayout renderEditorShell(const EditorScreenConfig& cfg) {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
@@ -368,10 +374,13 @@ EditorResult openDiaryEditor(const std::wstring& initialContent,
         renderEditor();
     };
 
-    auto showConfirmBar = [&](bool visible) {
-        if (visible) {
+    auto showConfirmBar = [&](ConfirmMode mode) {
+        if (mode != ConfirmMode::None) {
             fillLine(1, shell.statusY, screenW - 2, L' ', ATTR_NORMAL);
-            writeAtColor(3, shell.statusY, L"SAVE_BUFFER?  Enter=确认保存    Esc=继续编辑", 0x70);
+            const std::wstring prompt = mode == ConfirmMode::Exit
+                ? L"退出编辑?  Enter=确认保存    Esc=继续编辑"
+                : L"保存编辑?  Enter=确认保存    Esc=继续编辑";
+            writeAtColor(3, shell.statusY, prompt, 0x70);
         } else {
             setStatusLine(L">> INPUT READY", AMBER);
         }
@@ -379,10 +388,10 @@ EditorResult openDiaryEditor(const std::wstring& initialContent,
 
     rebuildLayout();
     redrawPanels();
-    showConfirmBar(false);
+    showConfirmBar(ConfirmMode::None);
     renderEditor();
 
-    bool inConfirm = false;
+    ConfirmMode confirmMode = ConfirmMode::None;
     bool vtCollecting = false;
     std::wstring vtNum;
     int vtKey = 0;
@@ -392,7 +401,7 @@ EditorResult openDiaryEditor(const std::wstring& initialContent,
         if (!waitForConsoleInputOrResize(hIn, screenW, screenH)) {
             rebuildLayout();
             redrawPanels();
-            showConfirmBar(inConfirm);
+            showConfirmBar(confirmMode);
             renderEditor();
             continue;
         }
@@ -447,25 +456,30 @@ EditorResult openDiaryEditor(const std::wstring& initialContent,
                     }
                 }
             }
-            if (inConfirm) {
-                inConfirm = false;
-                showConfirmBar(false);
+            if (confirmMode != ConfirmMode::None) {
+                confirmMode = ConfirmMode::None;
+                showConfirmBar(confirmMode);
                 redrawPanels();
+                continue;
+            }
+            if (cfg.confirmExitWhenBufferNotEmpty && !buf.empty()) {
+                confirmMode = ConfirmMode::Exit;
+                showConfirmBar(confirmMode);
                 continue;
             }
             SetConsoleMode(hIn, oldInMode);
             return {false, L""};
         }
 
-        if (inConfirm) {
+        if (confirmMode != ConfirmMode::None) {
             if (vk == VK_RETURN) {
-                showConfirmBar(false);
+                showConfirmBar(ConfirmMode::None);
                 SetConsoleMode(hIn, oldInMode);
                 return {true, buf};
             }
             if (vk == VK_ESCAPE) {
-                inConfirm = false;
-                showConfirmBar(false);
+                confirmMode = ConfirmMode::None;
+                showConfirmBar(confirmMode);
                 redrawPanels();
             }
             continue;
@@ -486,12 +500,17 @@ EditorResult openDiaryEditor(const std::wstring& initialContent,
         }
 
         if (vk == VK_RETURN) {
-            inConfirm = true;
-            showConfirmBar(true);
+            confirmMode = ConfirmMode::Save;
+            showConfirmBar(confirmMode);
             continue;
         }
 
         if (vk == VK_ESCAPE) {
+            if (cfg.confirmExitWhenBufferNotEmpty && !buf.empty()) {
+                confirmMode = ConfirmMode::Exit;
+                showConfirmBar(confirmMode);
+                continue;
+            }
             SetConsoleMode(hIn, oldInMode);
             return {false, L""};
         }

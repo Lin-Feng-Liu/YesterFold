@@ -68,6 +68,7 @@ void writeOrEditToday(DiaryStore& store, const std::string& password, const char
     cfg.projectBufferToHistory = true;
     cfg.livePreviewTime = utf8_to_wstring(currentTime);
     cfg.minEditInnerH = 5;
+    cfg.confirmExitWhenBufferNotEmpty = true;
 
     EditorResult result = openDiaryEditor(L"", cfg);
 

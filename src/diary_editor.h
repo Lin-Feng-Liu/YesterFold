@@ -15,6 +15,7 @@ struct EditorScreenConfig {
     bool projectBufferToHistory = false;
     std::wstring livePreviewTime = L"";
     int minEditInnerH = 8;
+    bool confirmExitWhenBufferNotEmpty = false;
 };
 
 struct EditorResult {
