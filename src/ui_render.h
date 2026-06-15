@@ -96,7 +96,9 @@ int largeDigitsHeight();
 void drawHeatmapCell(int x, int y, int level);
 ConsoleViewport getConsoleViewport();
 CenteredRect getCenteredRect(int screenW, int screenH, int desiredW, int desiredH, int minW = 88, int minH = 12);
-CenteredRect drawTerminalShell(const std::wstring& envLabel, bool fixedCentered = false);
+CenteredRect drawTerminalShell(const std::wstring& envLabel,
+                               bool fixedCentered = false,
+                               bool clearViewport = true);
 void writeWrappedPanelLines(int x, int y, int w, int h,
                             const std::vector<std::wstring>& logicalLines,
                             WORD attr = AMBER);

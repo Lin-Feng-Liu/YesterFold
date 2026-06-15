@@ -34,15 +34,12 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
 
         switch (choice) {
             case 0:  // 写入/编辑今日
-                clearScreen();
                 writeOrEditToday(store, password, DIARY_PATH);
                 break;
             case 1:  // 查看全部
-                clearScreen();
                 viewAllDiaries(store);
                 break;
             case 2:  // 按日期编辑
-                clearScreen();
                 editByDate(store, password, DIARY_PATH);
                 break;
             case 3:  // 导出/导入
@@ -52,7 +49,6 @@ static void mainLoop(DiaryStore& store, const std::string& password) {
                 changePasswordInteractive(password, DIARY_PATH);
                 break;
             case 5:  // 神秘计数器
-                clearScreen();
                 counterPage(store, password, DIARY_PATH);
                 break;
             case 6:  // 保存并退出

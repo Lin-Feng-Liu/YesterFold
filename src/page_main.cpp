@@ -256,9 +256,7 @@ MainPageLayout renderMainPage(const DiaryMetrics& metrics, const char* dataPath,
     int rightAreaW = boxW - (rightAreaX - boxX) - 4;
 
     clearScreen();
-    fillRegion(view.x, view.y, view.w, view.h, L' ', ATTR_NORMAL);
     drawMainFrame(boxX, boxY, boxW, boxH);
-    fillRegion(boxX + 1, boxY + 3, boxW - 2, boxH - 4, L' ', ATTR_NORMAL);
 
     {
         std::wstring left = L" [>_ SYS.TERMINAL // LOCAL_DIARY_ENV";

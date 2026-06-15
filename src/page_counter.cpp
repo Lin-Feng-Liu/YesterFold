@@ -164,7 +164,6 @@ void counterPage(DiaryStore& store, const std::string& password, const char* dia
             showFullScreenMessage(L"COUNTER UPDATED", {L"[计数器已更新]"});
             pauseScreen();
         } else if (choice == 2) {
-            clearScreen();
             browseCounterHistory(store, password, diaryPath);
         }
     }

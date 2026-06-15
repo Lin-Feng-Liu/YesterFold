@@ -1,5 +1,4 @@
 #include "ui_render.h"
-#include <cstdlib>
 #include <algorithm>
 
 // ─── 全局句柄定义 ───
@@ -56,7 +55,15 @@ void wprintln() {
     wprint(L"\r\n");
 }
 
-void clearScreen() { system("cls"); }
+void clearScreen() {
+    ConsoleViewport view = getConsoleViewport();
+    fillRegion(view.x, view.y, view.w, view.h, L' ', ATTR_NORMAL);
+    COORD pos = {
+        static_cast<SHORT>(view.x),
+        static_cast<SHORT>(view.y)
+    };
+    SetConsoleCursorPosition(g_hOut, pos);
+}
 
 // ─── 颜色控制 ───
 
@@ -85,9 +92,34 @@ void fillLine(int x, int y, int len, wchar_t ch, WORD attr) {
 }
 
 void fillRegion(int x, int y, int w, int h, wchar_t ch, WORD attr) {
-    for (int row = 0; row < h; ++row) {
-        fillLine(x, y + row, w, ch, attr);
+    if (w <= 0 || h <= 0) return;
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi{};
+    if (!GetConsoleScreenBufferInfo(g_hOut, &csbi)) return;
+
+    int left = std::max(0, x);
+    int top = std::max(0, y);
+    int right = std::min<int>(csbi.dwSize.X - 1, x + w - 1);
+    int bottom = std::min<int>(csbi.dwSize.Y - 1, y + h - 1);
+    if (left > right || top > bottom) return;
+
+    SHORT clippedW = static_cast<SHORT>(right - left + 1);
+    SHORT clippedH = static_cast<SHORT>(bottom - top + 1);
+    std::vector<CHAR_INFO> cells(static_cast<size_t>(clippedW) * clippedH);
+    for (auto& cell : cells) {
+        cell.Char.UnicodeChar = ch;
+        cell.Attributes = attr;
     }
+
+    COORD bufferSize = {clippedW, clippedH};
+    COORD bufferCoord = {0, 0};
+    SMALL_RECT target = {
+        static_cast<SHORT>(left),
+        static_cast<SHORT>(top),
+        static_cast<SHORT>(right),
+        static_cast<SHORT>(bottom)
+    };
+    WriteConsoleOutputW(g_hOut, cells.data(), bufferSize, bufferCoord, &target);
 }
 
 std::wstring fitTextToWidth(const std::wstring& text, int maxWidth) {
@@ -423,7 +455,9 @@ CenteredRect getCenteredRect(int screenW, int screenH, int desiredW, int desired
     return rect;
 }
 
-CenteredRect drawTerminalShell(const std::wstring& envLabel, bool fixedCentered) {
+CenteredRect drawTerminalShell(const std::wstring& envLabel,
+                               bool fixedCentered,
+                               bool clearViewport) {
     ConsoleViewport view = getConsoleViewport();
     int screenW = view.w;
     int screenH = view.h;
@@ -442,8 +476,11 @@ CenteredRect drawTerminalShell(const std::wstring& envLabel, bool fixedCentered)
         boxW = 88;
     }
 
-    clearScreen();
-    fillRegion(view.x, view.y, screenW, screenH, L' ', ATTR_NORMAL);
+    if (clearViewport) {
+        fillRegion(view.x, view.y, screenW, screenH, L' ', ATTR_NORMAL);
+    } else {
+        fillRegion(boxX + 1, boxY + 1, boxW - 2, boxH - 2, L' ', ATTR_NORMAL);
+    }
     drawDoubleBox(boxX, boxY, boxW, boxH);
     writeAtColor(boxX + 2, boxY + 1, L"[>_ SYS.TERMINAL // " + envLabel, AMBER);
     writeAtColor(boxX + boxW - 15, boxY + 1, L"[■][O][X] ", AMBER_DIM);
