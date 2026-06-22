@@ -112,3 +112,7 @@ https://github.com/Hammster/windows-terminal-shaders
  - 一天内可以有多个时间行，对应 JSON 里的 segments 数组                                             
  - 时间必须带分号结尾（; 或 ；），这是解析器区分"时间行"和"内容行"的唯一标志                        
  - 日期用 / 分隔，年/月/日，月份和日期可以是一位数（6）或两位数（06） 
+
+## 许可证
+
+本项目基于 GNU Affero General Public License v3.0 发布，详见 [LICENSE](LICENSE)。
