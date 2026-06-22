@@ -78,7 +78,7 @@ static void firstTimeSetup() {
 
     sodium_memzero(pass.data(), pass.size());
     sodium_memzero(passConfirm.data(), passConfirm.size());
-    wprintln(L"\n设置完成! 请重新运行程序登录。");
+    showFullScreenMessage(L"SETUP COMPLETE", {L"设置完成! 请重新运行程序登录。"});
 }
 
 // ─── 文件工具 ───
