@@ -12,6 +12,11 @@
 !/CHANGELOG.md
 !/功能说明.md
 
+# README 图片
+!/docs/
+!/docs/images/
+!/docs/images/**
+
 # 应用资源
 !/res/
 !/res/*.ico
