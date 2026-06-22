@@ -4,12 +4,24 @@
 # 允许 Git 继续读取目录结构，否则无法放行子目录里的源码。
 !*/
 
-# 仓库配置
-!.gitignore
+# 仓库配置和公开文档
+!/.gitignore
+!/README.md
+!/LICENSE
+!/LICENSE.txt
+!/CHANGELOG.md
+!/功能说明.md
 
-# 公开功能说明
-!功能说明.md
+# 应用资源
+!/res/
+!/res/*.ico
+!/res/*.rc
+!/res/shaders/
+!/res/shaders/*.hlsl
+
+# 用户安装脚本
+!/Install-Terminal-Profile.bat
 
 # 程序源码
-!src/
-!src/**
+!/src/
+!/src/**
