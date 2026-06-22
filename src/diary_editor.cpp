@@ -36,8 +36,10 @@ enum class ConfirmMode {
 EditorShellLayout renderEditorShell(const EditorScreenConfig& cfg) {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(g_hOut, &csbi);
-    int boxW = csbi.dwSize.X;
-    int boxH = csbi.dwSize.Y;
+    int boxW = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    int boxH = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    if (boxW <= 0) boxW = csbi.dwSize.X;
+    if (boxH <= 0) boxH = csbi.dwSize.Y;
     if (boxW < 88) boxW = 88;
 
     drawTerminalShell(cfg.screenLabel);
@@ -215,8 +217,10 @@ EditorResult openDiaryEditor(const std::wstring& initialContent,
 
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(hOut, &csbi);
-    int screenW = csbi.dwSize.X;
-    int screenH = csbi.dwSize.Y;
+    int screenW = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    int screenH = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    if (screenW <= 0) screenW = csbi.dwSize.X;
+    if (screenH <= 0) screenH = csbi.dwSize.Y;
     if (screenW < 20) screenW = 80;
 
     DWORD oldInMode;
@@ -243,8 +247,10 @@ EditorResult openDiaryEditor(const std::wstring& initialContent,
     auto rebuildLayout = [&]() {
         CONSOLE_SCREEN_BUFFER_INFO nowCsbi;
         GetConsoleScreenBufferInfo(hOut, &nowCsbi);
-        screenW = nowCsbi.dwSize.X;
-        screenH = nowCsbi.dwSize.Y;
+        screenW = nowCsbi.srWindow.Right - nowCsbi.srWindow.Left + 1;
+        screenH = nowCsbi.srWindow.Bottom - nowCsbi.srWindow.Top + 1;
+        if (screenW <= 0) screenW = nowCsbi.dwSize.X;
+        if (screenH <= 0) screenH = nowCsbi.dwSize.Y;
         if (screenW < 20) screenW = 80;
 
         shell = renderEditorShell(cfg);

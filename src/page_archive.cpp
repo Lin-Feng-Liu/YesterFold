@@ -173,14 +173,16 @@ void viewAllDiaries(const DiaryStore& store) {
     auto renderShell = [&]() {
         CONSOLE_SCREEN_BUFFER_INFO csbi;
         GetConsoleScreenBufferInfo(g_hOut, &csbi);
-        screenW = csbi.dwSize.X;
-        screenH = csbi.dwSize.Y;
+        screenW = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+        screenH = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+        if (screenW <= 0) screenW = csbi.dwSize.X;
+        if (screenH <= 0) screenH = csbi.dwSize.Y;
         if (screenW < 20) screenW = 80;
 
         drawTerminalShell(L"ARCHIVE.READER // LOCAL_DIARY_ENV");
 
-        int boxW = csbi.dwSize.X;
-        int boxH = csbi.dwSize.Y;
+        int boxW = screenW;
+        int boxH = screenH;
         if (boxW < 88) boxW = 88;
 
         writeAtColor(4, 4, L"[ VIEW ALL ENTRIES ]", AMBER_DIM);
