@@ -44,7 +44,7 @@
 
 ### 神秘计数器
 
-<img src="docs/images/count.png" alt="神秘计数器界面" width="720">
+<img src="docs/images/counter.png" alt="神秘计数器界面" width="720">
 
 
 ## 使用
