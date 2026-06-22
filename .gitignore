@@ -1,24 +1,12 @@
-# 编译产物
-diary.exe
-*.exe
-*.o
-*.obj
+# 默认忽略全部文件，避免根目录文档、快捷方式、脚本、数据和编译产物误提交。
+*
 
-# libsodium 第三方库 (需自行下载)
-lib/
-libsodium-*.dll
-*.a
-*.lib
-*.dll
+# 允许 Git 继续读取目录结构，否则无法放行子目录里的源码。
+!*/
 
-# 日记数据 (绝对不能提交!)
-data/
-*.enc
-*.txt
+# 仓库配置
+!.gitignore
 
-# 临时文件
-*.tmp
-*.swp
-*.zip
-*.tar.gz
-*.pdb
+# 程序源码
+!src/
+!src/**
