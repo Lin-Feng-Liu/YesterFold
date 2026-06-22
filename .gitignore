@@ -21,6 +21,7 @@
 
 # 用户安装脚本
 !/Install-Terminal-Profile.bat
+!/Start-YesterFold.bat
 
 # 程序源码
 !/src/
