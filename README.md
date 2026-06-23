@@ -13,6 +13,10 @@
 
 <img src="docs/images/low-memory.png" alt="低内存占用截图" width="720">
 
+-好吧因为是终端应用，实际要算上终端的内存占用，大概是30mb（
+
+<img src="docs/images/high-memory.png" alt="完整内存占用截图" width="720">
+
 
 ## 界面预览
 
@@ -112,6 +116,10 @@ https://github.com/Hammster/windows-terminal-shaders
  - 一天内可以有多个时间行，对应 JSON 里的 segments 数组                                             
  - 时间必须带分号结尾（; 或 ；），这是解析器区分"时间行"和"内容行"的唯一标志                        
  - 日期用 / 分隔，年/月/日，月份和日期可以是一位数（6）或两位数（06） 
+
+## 致谢
+
+[![LinuxDo](https://img.shields.io/badge/Community-LinuxDo-blue?style=for-the-badge)](https://linux.do/)
 
 ## 许可证
 
