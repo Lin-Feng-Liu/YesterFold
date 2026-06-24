@@ -53,8 +53,18 @@
 
 ## 使用
 
-直接运行：
+下载完.exe直接运行：
 
+```bat
+YesterFold.exe
+```
+
+如果下载的是YesterFold-ShaderEdition版本，则先运行：
+```bat
+Install-Terminal-Profile.bat
+```
+这一步会帮你自动配置好预制好的好看的终端美化包。
+然后再运行：
 ```bat
 YesterFold.exe
 ```
